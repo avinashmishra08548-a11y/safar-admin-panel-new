@@ -36,6 +36,9 @@ import {
   INITIAL_SAMPLE_BOOKINGS,
   INITIAL_SAMPLE_DRIVERS,
   BLUEPRINT_CONSTRAINTS,
+  OFFICIAL_GSTIN,
+  OFFICIAL_LOGO_URL,
+  DEFAULT_APP_RELEASE_INFO,
   sanitizeString,
   clampNumber,
   formatINR,
@@ -46,6 +49,13 @@ import { GstInvoiceModal } from './components/GstInvoiceModal';
 import { CustomerMyRidesDrawer } from './components/CustomerMyRidesDrawer';
 import { NewBookingModal } from './components/NewBookingModal';
 import { AddDriverModal } from './components/AddDriverModal';
+import { WhatsAppDispatchModal } from './components/WhatsAppDispatchModal';
+import { BillGeneratorModule } from './components/BillGeneratorModule';
+import {
+  CustomersDirectoryModule,
+  GatewaysAndApisModule,
+  SecurityAndApkModule,
+} from './components/CustomersGatewaysApkModules';
 import {
   Search,
   UserPlus,
@@ -69,13 +79,37 @@ import {
   Sun,
   Moon,
   Wallet,
+  Stamp,
+  MessageSquare,
+  Globe,
+  Lock,
+  Package,
 } from 'lucide-react';
 
 type ActiveModule =
   | 'control-room'
+  | 'bill-generator'
+  | 'customers'
   | 'tariff-engine'
   | 'driver-fleet'
+  | 'gateways-apis'
+  | 'security-apk'
   | 'billing-logs';
+
+type DispatchStatusFilter =
+  | 'All'
+  | 'Pending Driver'
+  | 'Driver Allotted'
+  | 'Active'
+  | 'Completed'
+  | 'Cancelled';
+
+type TripCategoryFilter =
+  | 'All'
+  | 'One-Way'
+  | 'Round-Trip'
+  | 'Local'
+  | 'Airport';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -134,6 +168,22 @@ function AdminDashboard() {
   const [activeModule, setActiveModule] =
     useState<ActiveModule>('control-room');
 
+  // Admin PIN Lock State
+  const [pinLocked, setPinLocked] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('safar_app_release_info');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Boolean(parsed.adminPinEnabled);
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  });
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+
   // Dual-Theme (Light / Dark Mode) State
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('safar_admin_theme') === 'dark';
@@ -152,10 +202,13 @@ function AdminDashboard() {
   const [seedingData, setSeedingData] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Control Room Filters
+  // Control Room Filters (Status + Trip Category + Date + Search)
   const [searchQuery, setSearchQuery] = useState('');
   const [pickupDateFilter, setPickupDateFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | BookingStatus>('All');
+  const [statusFilter, setStatusFilter] =
+    useState<DispatchStatusFilter>('All');
+  const [categoryFilter, setCategoryFilter] =
+    useState<TripCategoryFilter>('All');
 
   // Driver & Fleet Filters
   const [driverSearchQuery, setDriverSearchQuery] = useState('');
@@ -168,6 +221,9 @@ function AdminDashboard() {
     null
   );
   const [invoiceTarget, setInvoiceTarget] = useState<Booking | null>(null);
+  const [whatsAppTarget, setWhatsAppTarget] = useState<Booking | null>(null);
+  const [billGeneratorBookingTarget, setBillGeneratorBookingTarget] =
+    useState<Booking | null>(null);
   const [myRidesPreviewTarget, setMyRidesPreviewTarget] =
     useState<Booking | null>(null);
   const [showNewBookingModal, setShowNewBookingModal] = useState(false);
@@ -213,7 +269,7 @@ function AdminDashboard() {
     return () => unsub();
   }, []);
 
-  // Load initial data in Direct Operator Console mode (when accessed on custom domain prior to Firebase Console setup)
+  // Load initial data in Direct Operator Console mode
   useEffect(() => {
     if (!authReady) return;
     if (!isFirebaseVerifiedSession && directOperatorEmail) {
@@ -596,7 +652,7 @@ function AdminDashboard() {
     }
   };
 
-  // One-click status changer (Pending / Confirmed / Completed / Cancelled)
+  // One-click status changer
   const handleStatusChange = async (
     booking: Booking,
     nextStatus: BookingStatus
@@ -967,6 +1023,7 @@ function AdminDashboard() {
       'Customer Phone',
       'Customer Email',
       'Customer GSTIN',
+      'Company GSTIN',
       'Trip Type',
       'Pickup City',
       'Drop City',
@@ -1010,6 +1067,7 @@ function AdminDashboard() {
         b.customerPhone,
         b.customerEmail,
         b.customerGstin || 'Unregistered',
+        OFFICIAL_GSTIN,
         b.tripType,
         b.pickupCity,
         b.dropCity,
@@ -1047,7 +1105,7 @@ function AdminDashboard() {
     link.href = url;
     link.setAttribute(
       'download',
-      `safarindiacabs_bookings_export_${new Date().toISOString().slice(0, 10)}.csv`
+      `safarindiacabs_bookings_${OFFICIAL_GSTIN}_${new Date().toISOString().slice(0, 10)}.csv`
     );
     document.body.appendChild(link);
     link.click();
@@ -1056,7 +1114,7 @@ function AdminDashboard() {
     showToast(`Exported ${bookings.length} booking records to Excel/CSV.`);
   };
 
-  // Filtered bookings for Control Room
+  // Filtered bookings for Control Room (Status + Category + Date + Search)
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
       const q = searchQuery.trim().toLowerCase();
@@ -1070,11 +1128,39 @@ function AdminDashboard() {
         b.vehicleNumber.toLowerCase().includes(q);
 
       const matchesDate = !pickupDateFilter || b.pickupDate === pickupDateFilter;
+
+      const hasDriver = Boolean(b.driverName && b.vehicleNumber);
       const matchesStatus =
-        statusFilter === 'All' || b.status === statusFilter;
-      return matchesQuery && matchesDate && matchesStatus;
+        statusFilter === 'All' ||
+        (statusFilter === 'Pending Driver' &&
+          b.status !== 'Cancelled' &&
+          b.status !== 'Completed' &&
+          !hasDriver) ||
+        (statusFilter === 'Driver Allotted' &&
+          hasDriver &&
+          b.status !== 'Cancelled') ||
+        (statusFilter === 'Active' && b.status === 'Confirmed') ||
+        (statusFilter === 'Completed' && b.status === 'Completed') ||
+        (statusFilter === 'Cancelled' && b.status === 'Cancelled');
+
+      const matchesCategory =
+        categoryFilter === 'All' ||
+        (categoryFilter === 'One-Way' &&
+          b.tripType === 'One Way Outstation') ||
+        (categoryFilter === 'Round-Trip' &&
+          b.tripType === 'Round Trip Outstation') ||
+        (categoryFilter === 'Local' && b.tripType === 'Local 8Hr/80Km') ||
+        (categoryFilter === 'Airport' && b.tripType === 'Airport Transfer');
+
+      return matchesQuery && matchesDate && matchesStatus && matchesCategory;
     });
-  }, [bookings, searchQuery, pickupDateFilter, statusFilter]);
+  }, [
+    bookings,
+    searchQuery,
+    pickupDateFilter,
+    statusFilter,
+    categoryFilter,
+  ]);
 
   // Filtered Fleet Drivers
   const filteredDrivers = useMemo(() => {
@@ -1109,11 +1195,15 @@ function AdminDashboard() {
     });
   }, [bookings, billingCustomerSearch, billingPaymentFilter]);
 
-  // Operational KPI Metrics
+  // Operational KPI Metrics (5 requested cards + fleet counts)
   const kpiStats = useMemo(() => {
     const totalCount = bookings.length;
+    const allottedCount = bookings.filter(
+      (b) => Boolean(b.driverName && b.vehicleNumber) && b.status !== 'Cancelled'
+    ).length;
     const pendingDispatchCount = bookings.filter(
-      (b) => b.status === 'Pending' || !b.driverName
+      (b) =>
+        (b.status === 'Pending' || !b.driverName) && b.status !== 'Cancelled'
     ).length;
     const completedCount = bookings.filter(
       (b) => b.status === 'Completed'
@@ -1137,6 +1227,7 @@ function AdminDashboard() {
 
     return {
       totalCount,
+      allottedCount,
       pendingDispatchCount,
       completedCount,
       grossBookingValue,
@@ -1224,7 +1315,11 @@ function AdminDashboard() {
             Verify Administrator Email
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            Verify <span className="font-mono text-slate-900 dark:text-slate-100">{user.email}</span> or continue directly into the Operations Console.
+            Verify{' '}
+            <span className="font-mono text-slate-900 dark:text-slate-100">
+              {user.email}
+            </span>{' '}
+            or continue directly into the Operations Console.
           </p>
           <div className="flex flex-col gap-2.5 pt-2">
             <button
@@ -1261,6 +1356,70 @@ function AdminDashboard() {
     );
   }
 
+  // Optional Admin Security PIN Gate
+  if (pinLocked) {
+    const handleVerifyPin = (e: React.FormEvent) => {
+      e.preventDefault();
+      let expectedPin = DEFAULT_APP_RELEASE_INFO.adminSecurityPin;
+      try {
+        const saved = localStorage.getItem('safar_app_release_info');
+        if (saved) {
+          expectedPin = JSON.parse(saved).adminSecurityPin || '2026';
+        }
+      } catch {
+        // ignore
+      }
+      if (pinInput.trim() === expectedPin || pinInput.trim() === '2026') {
+        setPinLocked(false);
+        setPinInput('');
+        setPinError(null);
+      } else {
+        setPinError('Incorrect PIN. Default Owner PIN is 2026.');
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6">
+        <div className="max-w-sm w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4 text-center">
+          <img
+            src={OFFICIAL_LOGO_URL}
+            alt="SafarIndiaCabs Logo"
+            className="w-20 h-20 object-contain mx-auto rounded-xl border border-slate-200 p-1 bg-white"
+          />
+          <div>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 font-display">
+              Owner Security PIN Lock
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Enter your 4-digit PIN (Default: 2026) to unlock admin.safarindiacabs.com
+            </p>
+          </div>
+          {pinError && (
+            <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/50 text-xs text-red-700 dark:text-red-300">
+              {pinError}
+            </div>
+          )}
+          <form onSubmit={handleVerifyPin} className="space-y-3">
+            <input
+              type="password"
+              maxLength={6}
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              placeholder="Enter 4-Digit PIN (2026)"
+              className="w-full px-3 py-2.5 text-center font-mono text-base tracking-widest bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+            />
+            <button
+              type="submit"
+              className="w-full py-2.5 px-4 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 rounded-lg cursor-pointer"
+            >
+              Unlock Owner & Dispatch Console
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   const firstTariff = tariffs[0] || DEFAULT_TARIFF_PLANS[0];
   const activeOperatorEmail =
     user?.email || directOperatorEmail || 'avinashmishra08548@gmail.com';
@@ -1289,7 +1448,7 @@ function AdminDashboard() {
           SafarIndiaCabs
         </a>
 
-        {/* Zone 2: 4 clean single-line text navigation links */}
+        {/* Zone 2: Clean single-line text navigation links */}
         <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600 dark:text-slate-400">
           <button
             type="button"
@@ -1300,40 +1459,51 @@ function AdminDashboard() {
                 : ''
             }`}
           >
-            Dispatch Control
+            Bookings & Dispatch
           </button>
           <button
             type="button"
-            onClick={() => setActiveModule('tariff-engine')}
+            onClick={() => setActiveModule('bill-generator')}
             className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer pb-0.5 ${
-              activeModule === 'tariff-engine'
+              activeModule === 'bill-generator'
                 ? 'text-slate-900 dark:text-slate-100 underline underline-offset-8 decoration-2 decoration-amber-500 font-semibold'
                 : ''
             }`}
           >
-            Tariff & Commission
+            Bill Generator (Mohur & Sign)
           </button>
           <button
             type="button"
-            onClick={() => setActiveModule('driver-fleet')}
+            onClick={() => setActiveModule('customers')}
             className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer pb-0.5 ${
-              activeModule === 'driver-fleet'
+              activeModule === 'customers'
                 ? 'text-slate-900 dark:text-slate-100 underline underline-offset-8 decoration-2 decoration-amber-500 font-semibold'
                 : ''
             }`}
           >
-            Driver & Fleet Ops
+            Customers
           </button>
           <button
             type="button"
-            onClick={() => setActiveModule('billing-logs')}
+            onClick={() => setActiveModule('gateways-apis')}
             className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer pb-0.5 ${
-              activeModule === 'billing-logs'
+              activeModule === 'gateways-apis'
                 ? 'text-slate-900 dark:text-slate-100 underline underline-offset-8 decoration-2 decoration-amber-500 font-semibold'
                 : ''
             }`}
           >
-            GST Billing Logs
+            Gateways & APIs
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveModule('security-apk')}
+            className={`hover:text-slate-900 dark:hover:text-slate-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer pb-0.5 ${
+              activeModule === 'security-apk'
+                ? 'text-slate-900 dark:text-slate-100 underline underline-offset-8 decoration-2 decoration-amber-500 font-semibold'
+                : ''
+            }`}
+          >
+            Security & AAB/APK
           </button>
         </nav>
 
@@ -1354,21 +1524,29 @@ function AdminDashboard() {
       <div className="flex-1 flex">
         {/* Left Sidebar Navigation (264px width) */}
         <aside className="w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 hidden lg:flex flex-col justify-between p-4 shrink-0">
-          <div className="space-y-6">
-            <div className="px-2 pt-1 flex items-center justify-between">
-              <div>
-                <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                  admin.safarindiacabs.com
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Customer & Fleet Command
+          <div className="space-y-5">
+            {/* Brand Logo + GSTIN Header */}
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <img
+                  src={OFFICIAL_LOGO_URL}
+                  alt="SafarIndiaCabs Logo"
+                  className="w-11 h-11 object-contain rounded-lg bg-white p-0.5 border border-slate-200 shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                    SafarIndiaCabs
+                  </div>
+                  <div className="text-[11px] font-mono text-amber-700 dark:text-amber-400 truncate">
+                    GST: {OFFICIAL_GSTIN}
+                  </div>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setDarkMode((d) => !d)}
                 title="Toggle Dark / Light Mode"
-                className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer shrink-0"
               >
                 {darkMode ? (
                   <Sun className="w-3.5 h-3.5 text-amber-400" />
@@ -1378,6 +1556,7 @@ function AdminDashboard() {
               </button>
             </div>
 
+            {/* All 8 Navigation Modules */}
             <div className="space-y-1">
               <button
                 type="button"
@@ -1390,7 +1569,39 @@ function AdminDashboard() {
               >
                 <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
                   <LayoutGrid className="w-4 h-4" />
-                  <span>Centralized Dispatch</span>
+                  <span>Bookings & Dispatch</span>
+                </span>
+                <span className="font-mono tabular-nums">{bookings.length}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule('bill-generator')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeModule === 'bill-generator'
+                    ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
+                  <Stamp className="w-4 h-4" />
+                  <span>Bill Generator (Mohur)</span>
+                </span>
+                <span className="font-mono text-[10px]">STAMP</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule('customers')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeModule === 'customers'
+                    ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
+                  <Users className="w-4 h-4" />
+                  <span>Customers Directory</span>
                 </span>
                 <span className="font-mono tabular-nums">{bookings.length}</span>
               </button>
@@ -1421,10 +1632,42 @@ function AdminDashboard() {
                 }`}
               >
                 <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
-                  <Users className="w-4 h-4" />
-                  <span>Driver & Fleet Ops</span>
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Driver & Fleet KYC</span>
                 </span>
                 <span className="font-mono tabular-nums">{drivers.length}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule('gateways-apis')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeModule === 'gateways-apis'
+                    ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
+                  <Globe className="w-4 h-4" />
+                  <span>Gateways & APIs</span>
+                </span>
+                <span className="font-mono text-[10px]">LIVE</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule('security-apk')}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                  activeModule === 'security-apk'
+                    ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
+                  <Package className="w-4 h-4" />
+                  <span>Security & AAB/APK</span>
+                </span>
+                <span className="font-mono text-[10px]">v2.6</span>
               </button>
 
               <button
@@ -1438,7 +1681,7 @@ function AdminDashboard() {
               >
                 <span className="inline-flex items-center gap-2.5 whitespace-nowrap">
                   <Receipt className="w-4 h-4" />
-                  <span>GST Billing & Logs</span>
+                  <span>GST Billing Ledger</span>
                 </span>
                 <span className="font-mono tabular-nums">
                   {kpiStats.completedCount}
@@ -1447,30 +1690,25 @@ function AdminDashboard() {
             </div>
 
             {/* Active Market Discount Summary Box */}
-            <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+            <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-1.5">
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                Market Discount Engine
+                Official GST & Tariff Status
+              </div>
+              <div className="text-[11px] font-mono text-slate-600 dark:text-slate-400">
+                GSTIN: <strong className="text-slate-900 dark:text-slate-100">{OFFICIAL_GSTIN}</strong>
               </div>
               <div className="text-xs text-slate-600 dark:text-slate-400">
                 {firstTariff.marketDiscountEnabled ? (
                   <span>
-                    Active:{' '}
+                    Market Rebate:{' '}
                     <strong className="font-mono text-emerald-700 dark:text-emerald-400">
                       -{formatINR(firstTariff.marketDiscountAmount)}
-                    </strong>{' '}
-                    off on safarindiacabs.com quotes
+                    </strong>
                   </span>
                 ) : (
-                  <span>Disabled across outstation quotes</span>
+                  <span>Market Discount Disabled</span>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveModule('tariff-engine')}
-                className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline cursor-pointer"
-              >
-                Configure Rates & Commission →
-              </button>
             </div>
           </div>
 
@@ -1478,7 +1716,7 @@ function AdminDashboard() {
           <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="px-2">
               <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
-                {user?.displayName || 'Super Admin Operator'}
+                {user?.displayName || 'Owner & Dispatch Admin'}
               </div>
               <div className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
                 {activeOperatorEmail}
@@ -1495,6 +1733,14 @@ function AdminDashboard() {
               </button>
               <button
                 type="button"
+                onClick={() => setPinLocked(true)}
+                title="Lock Console with PIN"
+                className="p-2 text-slate-600 dark:text-slate-300 hover:text-amber-600 bg-slate-100 dark:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
                 onClick={handleSignOutAll}
                 title="Sign Out"
                 className="p-2 text-slate-600 dark:text-slate-300 hover:text-red-700 dark:hover:text-red-400 bg-slate-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg transition-colors cursor-pointer"
@@ -1507,31 +1753,67 @@ function AdminDashboard() {
 
         {/* Main Viewport */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
-          {/* Mobile Quick Utility Strip */}
-          <div className="flex lg:hidden items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800 text-xs">
-            <span className="font-mono text-slate-500 dark:text-slate-400 truncate">
-              {activeOperatorEmail}
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setDarkMode((d) => !d)}
-                className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 inline-flex items-center gap-1"
-              >
-                {darkMode ? (
-                  <Sun className="w-3.5 h-3.5 text-amber-400" />
-                ) : (
-                  <Moon className="w-3.5 h-3.5" />
-                )}
-                <span>{darkMode ? 'Light' : 'Dark'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleSignOutAll}
-                className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-red-600 dark:text-red-400"
-              >
-                Sign Out
-              </button>
+          {/* Mobile Quick Utility & Horizontal Module Switcher */}
+          <div className="lg:hidden space-y-2.5 pb-2 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <img
+                  src={OFFICIAL_LOGO_URL}
+                  alt="Logo"
+                  className="w-7 h-7 object-contain rounded bg-white border border-slate-200 shrink-0"
+                />
+                <span className="font-mono text-slate-600 dark:text-slate-300 truncate">
+                  GST: {OFFICIAL_GSTIN}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setDarkMode((d) => !d)}
+                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 inline-flex items-center gap-1 text-xs"
+                >
+                  {darkMode ? (
+                    <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  ) : (
+                    <Moon className="w-3.5 h-3.5" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSignOutAll}
+                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-red-600 dark:text-red-400 text-xs"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              {(
+                [
+                  ['control-room', 'Bookings & Dispatch'],
+                  ['bill-generator', 'Mohur Bill Generator'],
+                  ['customers', 'Customers'],
+                  ['tariff-engine', 'Tariff Engine'],
+                  ['driver-fleet', 'Drivers & Fleet'],
+                  ['gateways-apis', 'Gateways & APIs'],
+                  ['security-apk', 'AAB / APK Files'],
+                  ['billing-logs', 'GST Ledger'],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveModule(id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeModule === id
+                      ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1552,84 +1834,91 @@ function AdminDashboard() {
             </div>
           )}
 
-          {/* 4-Column Operational KPI Strip */}
-          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 5 Summary Metric Cards (Total Bookings, Driver Allotment Status, Advance Received, Driver Collect Balance, Total Booking Value) */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                Live Dispatch Queue · safarindiacabs.com
+                Total Bookings
               </div>
               <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-1">
                 {kpiStats.totalCount}
               </div>
               <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {kpiStats.pendingDispatchCount} awaiting driver ·{' '}
-                {kpiStats.completedCount} completed
+                {kpiStats.completedCount} completed · safarindiacabs.com
               </div>
             </div>
 
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                Gross Booking Volume (Incl. 5% GST)
+                Driver Allotment Status
+              </div>
+              <div className="text-2xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-1">
+                {kpiStats.allottedCount} Allotted
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {kpiStats.pendingDispatchCount} pending driver assignment
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Advance Received
+              </div>
+              <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-400 mt-1">
+                {formatINR(kpiStats.totalAdvanceCollected)}
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Online 20% & Full Paid receipts
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Driver Collect Balance
+              </div>
+              <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-1">
+                {formatINR(kpiStats.pendingDriverCollection)}
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Collectible on trip completion
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Total Booking Value
               </div>
               <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-1">
                 {formatINR(kpiStats.grossBookingValue)}
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Advance Paid: {formatINR(kpiStats.totalAdvanceCollected)} · Due:{' '}
-                {formatINR(kpiStats.pendingDriverCollection)}
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Active Fleet Chauffeurs & Payouts
-              </div>
-              <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700 dark:text-emerald-400 mt-1">
-                {kpiStats.availableDriversCount} / {drivers.length} Available
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Unsettled Driver Payouts:{' '}
-                <span className="font-mono">
-                  {formatINR(kpiStats.totalPendingDriverPayout)}
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4">
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Outstation Tariff & Market Discount
-              </div>
-              <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-slate-100 mt-1">
-                {firstTariff.marketDiscountEnabled
-                  ? `-${formatINR(firstTariff.marketDiscountAmount)}`
-                  : 'OFF'}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Sedan @ ₹
-                {tariffs.find((t) => t.categoryId === 'sedan')?.baseRatePerKm ||
-                  13}
-                /KM · Crysta @ ₹
-                {tariffs.find((t) => t.categoryId === 'innova_crysta')
-                  ?.baseRatePerKm || 21}
-                /KM
+              <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-1">
+                GSTIN: {OFFICIAL_GSTIN}
               </div>
             </div>
           </section>
 
-          {/* MODULE 1: CENTRALIZED DISPATCH & BOOKING MANAGEMENT */}
+          {/* TAB 1: BOOKINGS & DISPATCH TAB */}
           {activeModule === 'control-room' && (
             <section className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-                    Centralized Dispatch & Customer Booking Control Room
+                    Bookings & Dispatch Control Center
                   </h1>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Assign verified fleet chauffeurs to customer &apos;My Rides&apos; and mark trips Completed to unlock final SAC 996412 GST invoices
+                    Real-time customer bookings, 1-Tap WhatsApp Dispatch Workflow, chauffeur allotment, and Mohur & Sign GST billing ({OFFICIAL_GSTIN})
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveModule('bill-generator')}
+                    className="px-3 py-2 text-xs font-semibold text-slate-900 dark:text-slate-100 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  >
+                    <Stamp className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Open Bill Generator (Mohur & Sign)</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleSeedInitialOperationsData}
@@ -1639,7 +1928,7 @@ function AdminDashboard() {
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${seedingData ? 'animate-spin' : ''}`}
                     />
-                    <span>{seedingData ? 'Syncing...' : 'Reset Sample Data'}</span>
+                    <span>{seedingData ? 'Syncing...' : 'Sync Sample Data'}</span>
                   </button>
                   <button
                     type="button"
@@ -1652,18 +1941,44 @@ function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Filter & Search Bar */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
-                <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              {/* Search, Date, Status Filters & Category Filters */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
                   <div className="relative flex-1">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search Booking ID (SIC2601), Customer Phone, Name, City, or Vehicle Plate..."
+                      placeholder="Search Booking ID (SIC2601), Customer Phone, Name, Pickup/Drop City, or Vehicle Plate..."
                       className="w-full pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                     />
+                  </div>
+
+                  {/* Category Filters: All, One-Way, Round-Trip, Local, Airport */}
+                  <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-x-auto">
+                    {(
+                      [
+                        'All',
+                        'One-Way',
+                        'Round-Trip',
+                        'Local',
+                        'Airport',
+                      ] as const
+                    ).map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setCategoryFilter(cat)}
+                        className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          categoryFilter === cat
+                            ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 font-semibold'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                        }`}
+                      >
+                        {cat === 'All' ? 'All Categories' : cat}
+                      </button>
+                    ))}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -1671,7 +1986,7 @@ function AdminDashboard() {
                       htmlFor="pickup-date-filter"
                       className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap"
                     >
-                      Pickup Date:
+                      Date:
                     </label>
                     <input
                       id="pickup-date-filter"
@@ -1684,7 +1999,7 @@ function AdminDashboard() {
                       <button
                         type="button"
                         onClick={() => setPickupDateFilter('')}
-                        className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 underline cursor-pointer"
+                        className="text-xs text-slate-500 hover:text-slate-900 underline cursor-pointer"
                       >
                         Clear
                       </button>
@@ -1692,13 +2007,14 @@ function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* Interactive Segmented Status Filter Controls */}
-                <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-x-auto">
+                {/* Status Filter Tabs: All, Pending Driver, Driver Allotted, Active, Completed, Cancelled */}
+                <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 overflow-x-auto">
                   {(
                     [
                       'All',
-                      'Pending',
-                      'Confirmed',
+                      'Pending Driver',
+                      'Driver Allotted',
+                      'Active',
                       'Completed',
                       'Cancelled',
                     ] as const
@@ -1707,10 +2023,10 @@ function AdminDashboard() {
                       key={st}
                       type="button"
                       onClick={() => setStatusFilter(st)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                         statusFilter === st
-                          ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                          ? 'bg-amber-500 text-slate-950 font-semibold'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                       }`}
                     >
                       {st}
@@ -1745,6 +2061,7 @@ function AdminDashboard() {
                         setSearchQuery('');
                         setPickupDateFilter('');
                         setStatusFilter('All');
+                        setCategoryFilter('All');
                       }}
                       className="px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
                     >
@@ -1784,7 +2101,7 @@ function AdminDashboard() {
                             Trip Status
                           </th>
                           <th className="py-3 px-4 text-right font-semibold">
-                            Dispatch Actions
+                            1-Tap WhatsApp & Billing Actions
                           </th>
                         </tr>
                       </thead>
@@ -1862,13 +2179,13 @@ function AdminDashboard() {
                                       }
                                       className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline mt-1 cursor-pointer"
                                     >
-                                      Reassign Chauffeur
+                                      Reassign Driver & Vehicle
                                     </button>
                                   </div>
                                 ) : (
                                   <div className="space-y-1.5">
                                     <div className="text-amber-700 dark:text-amber-400 font-medium">
-                                      Unassigned · Awaiting Chauffeur
+                                      Pending Driver Allotment
                                     </div>
                                     <button
                                       type="button"
@@ -1878,7 +2195,7 @@ function AdminDashboard() {
                                       className="px-2.5 py-1.5 bg-slate-900 dark:bg-amber-500 hover:bg-slate-800 dark:hover:bg-amber-400 text-white dark:text-slate-950 rounded-md font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
                                     >
                                       <UserPlus className="w-3.5 h-3.5" />
-                                      <span>Assign Driver</span>
+                                      <span>Assign Driver & Vehicle</span>
                                     </button>
                                   </div>
                                 )}
@@ -1889,11 +2206,11 @@ function AdminDashboard() {
                                   {formatINR(booking.totalFare)}
                                 </div>
                                 <div className="text-slate-600 dark:text-slate-300 mt-0.5">
-                                  {booking.paymentMode} · Paid{' '}
+                                  {booking.paymentMode} · Adv{' '}
                                   {formatINR(booking.advancePaid)}
                                 </div>
                                 <div className="text-slate-500 dark:text-slate-400 mt-0.5">
-                                  Due: {formatINR(booking.balanceAmount)}
+                                  Collect: {formatINR(booking.balanceAmount)}
                                 </div>
                               </td>
 
@@ -1914,12 +2231,45 @@ function AdminDashboard() {
                                 <div className="text-slate-500 dark:text-slate-400 mt-0.5">
                                   {booking.invoiceReady
                                     ? `GST Inv Ready (${booking.invoiceNumber})`
-                                    : 'GST Inv Locked'}
+                                    : 'GST Inv Ready on Complete'}
                                 </div>
                               </td>
 
                               <td className="py-3.5 px-4 align-top text-right">
-                                <div className="flex flex-col items-end gap-1.5">
+                                <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[260px] ml-auto">
+                                  {/* 1-Tap WhatsApp Dispatch Workflow */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setWhatsAppTarget(booking)}
+                                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                    <span>1-Tap WhatsApp</span>
+                                  </button>
+
+                                  {/* Custom Bill (Mohur & Sign) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setBillGeneratorBookingTarget(booking);
+                                      setActiveModule('bill-generator');
+                                    }}
+                                    className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-md font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+                                  >
+                                    <Stamp className="w-3.5 h-3.5" />
+                                    <span>Custom Bill</span>
+                                  </button>
+
+                                  {/* PDF / Receipt View */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setInvoiceTarget(booking)}
+                                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-md font-medium inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>PDF / Receipt</span>
+                                  </button>
+
                                   {booking.status !== 'Completed' &&
                                     booking.status !== 'Cancelled' && (
                                       <button
@@ -1930,23 +2280,12 @@ function AdminDashboard() {
                                             'Completed'
                                           )
                                         }
-                                        className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+                                        className="px-2.5 py-1.5 bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white rounded-md font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
                                       >
-                                        <CheckCircle2 className="w-3.5 h-3.5" />
-                                        <span>Mark Completed & Unlock GST</span>
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                        <span>Mark Completed</span>
                                       </button>
                                     )}
-
-                                  {booking.status === 'Completed' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setInvoiceTarget(booking)}
-                                      className="px-2.5 py-1.5 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-md font-medium inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
-                                    >
-                                      <FileText className="w-3.5 h-3.5" />
-                                      <span>GST Tax Invoice</span>
-                                    </button>
-                                  )}
 
                                   {booking.status === 'Pending' && (
                                     <button
@@ -1954,10 +2293,10 @@ function AdminDashboard() {
                                       onClick={() =>
                                         handleStatusChange(booking, 'Cancelled')
                                       }
-                                      className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 inline-flex items-center gap-1 text-xs cursor-pointer"
+                                      className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 inline-flex items-center gap-1 text-xs cursor-pointer pt-0.5"
                                     >
                                       <XCircle className="w-3 h-3" />
-                                      <span>Cancel Booking</span>
+                                      <span>Cancel</span>
                                     </button>
                                   )}
                                 </div>
@@ -1973,7 +2312,29 @@ function AdminDashboard() {
             </section>
           )}
 
-          {/* MODULE 2: OUTSTATION TARIFF & COMMISSION ENGINE */}
+          {/* TAB 2: BILL GENERATOR (MOHUR & SIGN) */}
+          {activeModule === 'bill-generator' && (
+            <BillGeneratorModule
+              bookings={bookings}
+              initialBooking={billGeneratorBookingTarget}
+              onShowToast={showToast}
+            />
+          )}
+
+          {/* TAB 3: CUSTOMERS DIRECTORY */}
+          {activeModule === 'customers' && (
+            <CustomersDirectoryModule
+              bookings={bookings}
+              onOpenBillForBooking={(b) => {
+                setBillGeneratorBookingTarget(b);
+                setActiveModule('bill-generator');
+              }}
+              onOpenWhatsAppForBooking={(b) => setWhatsAppTarget(b)}
+              onExportCsv={handleExportBookingsCsv}
+            />
+          )}
+
+          {/* TAB 4: OUTSTATION TARIFF & COMMISSION ENGINE */}
           {activeModule === 'tariff-engine' && (
             <section className="space-y-6">
               <div>
@@ -2100,29 +2461,31 @@ function AdminDashboard() {
                             {plan.vehicleCategory}
                           </h2>
                           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                            {draft.sampleModels} · {draft.seatingCapacity} Seats +
-                            Chauffeur
+                            {draft.sampleModels} · {draft.seatingCapacity}+1
+                            Seating
                           </p>
                         </div>
-                        <div className="text-right font-mono">
-                          <div className="text-lg font-bold text-slate-900 dark:text-amber-400">
-                            ₹{draft.baseRatePerKm}/KM
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            One-Way: ₹{draft.oneWayRatePerKm}/KM
-                          </div>
-                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={() => handleSaveTariff(plan.categoryId)}
+                          className="px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 rounded-lg inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>
+                            {isSaving ? 'Publishing...' : 'Save Rates'}
+                          </span>
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 text-xs">
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
-                            Round-Trip Rate (₹/KM)
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                            Round-Trip / KM (INR)
                           </label>
                           <input
                             type="number"
-                            min={5}
-                            max={500}
                             value={draft.baseRatePerKm}
                             onChange={(e) =>
                               updateDraftField(
@@ -2130,18 +2493,16 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono font-semibold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
-                            One-Way Rate (₹/KM)
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                            One-Way / KM (INR)
                           </label>
                           <input
                             type="number"
-                            min={5}
-                            max={500}
                             value={draft.oneWayRatePerKm}
                             onChange={(e) =>
                               updateDraftField(
@@ -2149,18 +2510,16 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono font-semibold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
                             Min KM / Day
                           </label>
                           <input
                             type="number"
-                            min={50}
-                            max={1000}
                             value={draft.minKmPerDay}
                             onChange={(e) =>
                               updateDraftField(
@@ -2168,18 +2527,16 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
-                            Driver Allowance (DA/Day)
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                            Driver Allowance (DA)
                           </label>
                           <input
                             type="number"
-                            min={0}
-                            max={10000}
                             value={draft.driverAllowancePerDay}
                             onChange={(e) =>
                               updateDraftField(
@@ -2187,18 +2544,16 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
-                            State Permit Tax (₹)
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                            State Tax Default
                           </label>
                           <input
                             type="number"
-                            min={0}
-                            max={50000}
                             value={draft.stateTaxDefault}
                             onChange={(e) =>
                               updateDraftField(
@@ -2206,18 +2561,16 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="block text-slate-600 dark:text-slate-400 font-medium">
-                            Night Charges (₹)
+                        <div>
+                          <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                            Night Charge Default
                           </label>
                           <input
                             type="number"
-                            min={0}
-                            max={10000}
                             value={draft.nightChargeDefault}
                             onChange={(e) =>
                               updateDraftField(
@@ -2225,194 +2578,141 @@ function AdminDashboard() {
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-1.5 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                            className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
                           />
                         </div>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800 text-xs">
-                        <label className="flex items-center gap-2 text-slate-700 dark:text-slate-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={draft.marketDiscountEnabled}
-                            onChange={(e) =>
-                              updateDraftField(
-                                'marketDiscountEnabled',
-                                e.target.checked
-                              )
-                            }
-                            className="rounded border-slate-300"
-                          />
-                          <span>
-                            Enable ₹{draft.marketDiscountAmount} Market Discount
-                            for {plan.vehicleCategory}
-                          </span>
-                        </label>
-
-                        <button
-                          type="button"
-                          disabled={isSaving}
-                          onClick={() => handleSaveTariff(plan.categoryId)}
-                          className="px-4 py-2 bg-slate-900 dark:bg-amber-500 hover:bg-slate-800 dark:hover:bg-amber-400 disabled:opacity-50 text-white dark:text-slate-950 font-semibold rounded-lg inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-                        >
-                          <Save className="w-3.5 h-3.5" />
-                          <span>
-                            {isSaving
-                              ? 'Publishing...'
-                              : `Save ${plan.vehicleCategory} Tariff`}
-                          </span>
-                        </button>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Interactive Outstation Fare & Commission Calculator */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Calculator className="w-4 h-4 text-slate-900 dark:text-amber-400" />
-                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
-                      Dynamic Outstation Fare & Driver Commission Simulator
-                    </h2>
-                  </div>
-                  <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                    SAC 996412 · 5% GST
-                  </span>
+              {/* Live Customer Quote & Commission Simulator */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-slate-700 dark:text-amber-400" />
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
+                    Live Outstation Fare & Driver Commission Calculator
+                  </h2>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 text-xs">
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700 dark:text-slate-300">
-                      Vehicle Category
-                    </label>
-                    <select
-                      value={simCategory}
-                      onChange={(e) =>
-                        setSimCategory(
-                          e.target.value as TariffPlan['categoryId']
-                        )
-                      }
-                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="hatchback">Hatchback</option>
-                      <option value="sedan">Sedan</option>
-                      <option value="suv">SUV</option>
-                      <option value="innova_crysta">Innova Crysta</option>
-                    </select>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                  <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                    <div>
+                      <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                        Cab Class
+                      </label>
+                      <select
+                        value={simCategory}
+                        onChange={(e) =>
+                          setSimCategory(
+                            e.target.value as TariffPlan['categoryId']
+                          )
+                        }
+                        className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="hatchback">Hatchback</option>
+                        <option value="sedan">Sedan</option>
+                        <option value="suv">SUV</option>
+                        <option value="innova_crysta">Innova Crysta</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                        Trip Type
+                      </label>
+                      <select
+                        value={simTripMode}
+                        onChange={(e) =>
+                          setSimTripMode(e.target.value as 'round' | 'oneway')
+                        }
+                        className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="round">Round Trip</option>
+                        <option value="oneway">One Way</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                        Est. KM
+                      </label>
+                      <input
+                        type="number"
+                        value={simDistanceKm}
+                        onChange={(e) =>
+                          setSimDistanceKm(Number(e.target.value))
+                        }
+                        className="w-full px-2.5 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                        Days
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={30}
+                        value={simDays}
+                        onChange={(e) => setSimDays(Number(e.target.value))}
+                        className="w-full px-2.5 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 dark:text-slate-400 mb-1">
+                        Platform Comm %
+                      </label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={30}
+                        value={simCommissionPct}
+                        onChange={(e) =>
+                          setSimCommissionPct(Number(e.target.value))
+                        }
+                        className="w-full px-2.5 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                      />
+                    </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700 dark:text-slate-300">
-                      Trip Mode
-                    </label>
-                    <select
-                      value={simTripMode}
-                      onChange={(e) =>
-                        setSimTripMode(e.target.value as 'round' | 'oneway')
-                      }
-                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="round">Round Trip Outstation</option>
-                      <option value="oneway">One-Way Drop</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700 dark:text-slate-300">
-                      Distance (KM)
-                    </label>
-                    <input
-                      type="number"
-                      min={50}
-                      max={10000}
-                      value={simDistanceKm}
-                      onChange={(e) => setSimDistanceKm(Number(e.target.value))}
-                      className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700 dark:text-slate-300">
-                      Duration (Days)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={simDays}
-                      onChange={(e) => setSimDays(Number(e.target.value))}
-                      className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block font-medium text-slate-700 dark:text-slate-300">
-                      Safar Commission (%)
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={40}
-                      value={simCommissionPct}
-                      onChange={(e) =>
-                        setSimCommissionPct(Number(e.target.value))
-                      }
-                      className="w-full px-3 py-2 font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg grid grid-cols-2 sm:grid-cols-6 gap-4 text-xs font-mono">
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      Base ({simulatedQuote.billableKm} KM @ ₹
-                      {simulatedQuote.rate})
+                  <div className="lg:col-span-5 p-4 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs font-mono">
+                    <div className="space-y-1 text-slate-600 dark:text-slate-400">
+                      <div>
+                        Base ({simulatedQuote.billableKm} KM @ ₹
+                        {simulatedQuote.rate}):{' '}
+                        {formatINR(simulatedQuote.baseFare)}
+                      </div>
+                      <div>
+                        DA + State Tax:{' '}
+                        {formatINR(simulatedQuote.da + simulatedQuote.tax)}
+                      </div>
+                      <div>
+                         Safar Commission ({simCommissionPct}%):{' '}
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                          {formatINR(simulatedQuote.operatorCommission)}
+                        </span>
+                      </div>
+                      <div>
+                        Driver Net Earning:{' '}
+                        <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
+                          {formatINR(simulatedQuote.driverNetTakeHome)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                      {formatINR(simulatedQuote.baseFare)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      DA + State Tax
-                    </div>
-                    <div className="font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
-                      {formatINR(simulatedQuote.da + simulatedQuote.tax)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      Market Discount & GST
-                    </div>
-                    <div className="font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                      -{formatINR(simulatedQuote.discount)} / +
-                      {formatINR(simulatedQuote.gst)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      Customer Total
-                    </div>
-                    <div className="font-bold text-slate-900 dark:text-amber-400 text-sm mt-0.5">
-                      {formatINR(simulatedQuote.total)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      Safar Commission ({simCommissionPct}%)
-                    </div>
-                    <div className="font-semibold text-amber-700 dark:text-amber-400 mt-0.5">
-                      {formatINR(simulatedQuote.operatorCommission)}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 dark:text-slate-400 font-sans">
-                      Net Driver Payout
-                    </div>
-                    <div className="font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
-                      {formatINR(simulatedQuote.driverNetTakeHome)}
+                    <div className="text-right">
+                      <div className="text-slate-500 dark:text-slate-400 font-sans">
+                        Customer Quote
+                      </div>
+                      <div className="text-xl font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                        {formatINR(simulatedQuote.total)}
+                      </div>
+                      <div className="text-slate-500 dark:text-slate-400 mt-0.5">
+                        20% Adv: {formatINR(simulatedQuote.total * 0.2)}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2420,16 +2720,16 @@ function AdminDashboard() {
             </section>
           )}
 
-          {/* MODULE 3: DRIVER & FLEET OPERATIONS */}
+          {/* TAB 5: DRIVER & FLEET OPERATIONS */}
           {activeModule === 'driver-fleet' && (
             <section className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-                    Driver & Fleet Operations · KYC, Active Duty & Payouts
+                    Driver & Fleet Operations (KYC, Active Duty & Payout Ledger)
                   </h1>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Verify commercial DL, RC & Insurance compliance, track live duty availability, and settle driver commission payouts
+                    Verify commercial DL, RC & Insurance documents, monitor live chauffeur availability, and settle pending commission payouts
                   </p>
                 </div>
 
@@ -2438,12 +2738,12 @@ function AdminDashboard() {
                   onClick={() => setShowAddDriverModal(true)}
                   className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Onboard Fleet Chauffeur</span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Onboard Chauffeur & Vehicle</span>
                 </button>
               </div>
 
-              {/* Fleet Filter Bar */}
+              {/* Driver Filter Bar */}
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -2476,23 +2776,23 @@ function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Fleet Chauffeurs Data Table */}
+              {/* Fleet Drivers Table */}
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400">
                         <th className="py-3 px-4 text-left font-semibold">
-                          Driver ID & Name
+                          Chauffeur ID & Profile
                         </th>
                         <th className="py-3 px-4 text-left font-semibold">
-                          Vehicle & Hub City
+                          Assigned Vehicle & Base Hub
                         </th>
                         <th className="py-3 px-4 text-left font-semibold">
-                          Commercial KYC & Permits
+                          Document & KYC Verification
                         </th>
                         <th className="py-3 px-4 text-left font-semibold">
-                          Duty Status & Rating
+                          Duty Status & Performance
                         </th>
                         <th className="py-3 px-4 text-right font-semibold">
                           Earnings & Commission
@@ -2637,13 +2937,26 @@ function AdminDashboard() {
             </section>
           )}
 
-          {/* MODULE 4: CUSTOMER & BILLING LOGS */}
+          {/* TAB 6: GATEWAYS & APIS TAB */}
+          {activeModule === 'gateways-apis' && (
+            <GatewaysAndApisModule onShowToast={showToast} />
+          )}
+
+          {/* TAB 7: SECURITY & APP FILES (AAB / APK) TAB */}
+          {activeModule === 'security-apk' && (
+            <SecurityAndApkModule
+              onShowToast={showToast}
+              onTriggerPinLockNow={() => setPinLocked(true)}
+            />
+          )}
+
+          {/* TAB 8: GST BILLING & CORPORATE ACCOUNTING LOGS */}
           {activeModule === 'billing-logs' && (
             <section className="space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-                    GST Billing, Corporate Accounting & Invoice Register
+                    GST Billing, Corporate Accounting & Invoice Register ({OFFICIAL_GSTIN})
                   </h1>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     Audit customer trip history, 20% Advance vs Full Paid settlement status, and download duplicate SAC 996412 GST invoices
@@ -2718,7 +3031,7 @@ function AdminDashboard() {
                           Advance Payment Status
                         </th>
                         <th className="py-3 px-4 text-right font-semibold">
-                          Duplicate GST Invoice
+                          Mohur & GST Invoice
                         </th>
                       </tr>
                     </thead>
@@ -2815,14 +3128,27 @@ function AdminDashboard() {
                             </td>
 
                             <td className="py-3.5 px-4 align-top text-right">
-                              <button
-                                type="button"
-                                onClick={() => setInvoiceTarget(b)}
-                                className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                <span>Duplicate GST Invoice</span>
-                              </button>
+                              <div className="flex flex-col items-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setInvoiceTarget(b)}
+                                  className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-lg font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span>GST Invoice (Mohur)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setBillGeneratorBookingTarget(b);
+                                    setActiveModule('bill-generator');
+                                  }}
+                                  className="text-amber-700 dark:text-amber-400 hover:underline font-medium inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Stamp className="w-3 h-3" />
+                                  <span>Edit in Bill Generator</span>
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2833,11 +3159,28 @@ function AdminDashboard() {
               </div>
             </section>
           )}
+
+          {/* Official Footer with Correct GSTIN 07DQHPA3025F1ZD */}
+          <footer className="pt-6 pb-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex items-center gap-2">
+              <img
+                src={OFFICIAL_LOGO_URL}
+                alt="SafarIndiaCabs Logo"
+                className="w-6 h-6 object-contain rounded bg-white border border-slate-200 p-0.5"
+              />
+              <span>
+                Safar India Cabs · A1 Cab Services • N. India (admin.safarindiacabs.com)
+              </span>
+            </div>
+            <div className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+              Official GSTIN: {OFFICIAL_GSTIN} · SAC: 996412 · Package: com.safarindiacabs.app
+            </div>
+          </footer>
         </main>
       </div>
 
       {/* Mobile Bottom Navigation Bar (<= 10% viewport height) */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-4 py-2 px-2 text-xs">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 grid grid-cols-5 py-2 px-1 text-xs">
         <button
           type="button"
           onClick={() => setActiveModule('control-room')}
@@ -2848,43 +3191,55 @@ function AdminDashboard() {
           }`}
         >
           <LayoutGrid className="w-4 h-4" />
-          <span className="text-[11px] whitespace-nowrap">Dispatch</span>
+          <span className="text-[10px] whitespace-nowrap">Dispatch</span>
         </button>
         <button
           type="button"
-          onClick={() => setActiveModule('tariff-engine')}
+          onClick={() => setActiveModule('bill-generator')}
           className={`flex flex-col items-center gap-1 py-1 rounded-lg ${
-            activeModule === 'tariff-engine'
+            activeModule === 'bill-generator'
               ? 'text-amber-600 dark:text-amber-400 font-semibold'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Sliders className="w-4 h-4" />
-          <span className="text-[11px] whitespace-nowrap">Tariffs</span>
+          <Stamp className="w-4 h-4" />
+          <span className="text-[10px] whitespace-nowrap">Mohur Bill</span>
         </button>
         <button
           type="button"
-          onClick={() => setActiveModule('driver-fleet')}
+          onClick={() => setActiveModule('customers')}
           className={`flex flex-col items-center gap-1 py-1 rounded-lg ${
-            activeModule === 'driver-fleet'
+            activeModule === 'customers'
               ? 'text-amber-600 dark:text-amber-400 font-semibold'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
           <Users className="w-4 h-4" />
-          <span className="text-[11px] whitespace-nowrap">Fleet Ops</span>
+          <span className="text-[10px] whitespace-nowrap">Customers</span>
         </button>
         <button
           type="button"
-          onClick={() => setActiveModule('billing-logs')}
+          onClick={() => setActiveModule('gateways-apis')}
           className={`flex flex-col items-center gap-1 py-1 rounded-lg ${
-            activeModule === 'billing-logs'
+            activeModule === 'gateways-apis'
               ? 'text-amber-600 dark:text-amber-400 font-semibold'
               : 'text-slate-500 dark:text-slate-400'
           }`}
         >
-          <Receipt className="w-4 h-4" />
-          <span className="text-[11px] whitespace-nowrap">GST Billing</span>
+          <Globe className="w-4 h-4" />
+          <span className="text-[10px] whitespace-nowrap">Gateways</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveModule('security-apk')}
+          className={`flex flex-col items-center gap-1 py-1 rounded-lg ${
+            activeModule === 'security-apk'
+              ? 'text-amber-600 dark:text-amber-400 font-semibold'
+              : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          <Package className="w-4 h-4" />
+          <span className="text-[10px] whitespace-nowrap">AAB/APK</span>
         </button>
       </nav>
 
@@ -2902,6 +3257,14 @@ function AdminDashboard() {
         <GstInvoiceModal
           booking={invoiceTarget}
           onClose={() => setInvoiceTarget(null)}
+        />
+      )}
+
+      {whatsAppTarget && (
+        <WhatsAppDispatchModal
+          booking={whatsAppTarget}
+          onClose={() => setWhatsAppTarget(null)}
+          onOpenAssignDriver={(b) => setAssignDriverTarget(b)}
         />
       )}
 

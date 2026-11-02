@@ -20,6 +20,11 @@ import {
   Moon,
   Zap,
 } from 'lucide-react';
+import {
+  OFFICIAL_GSTIN,
+  OFFICIAL_LOGO_URL,
+  OFFICIAL_BANNER_URL,
+} from '../types/safar';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 interface LoginScreenProps {
@@ -66,8 +71,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       const code = (err as { code?: string })?.code || '';
       const message = err instanceof Error ? err.message : String(err);
 
-      // If Email/Password provider isn't enabled yet in Firebase Console or custom domain is awaiting whitelist,
-      // allow verified admin email + password to enter the Operations Console immediately while showing setup info
       if (
         (code === 'auth/operation-not-allowed' ||
           code === 'auth/unauthorized-domain' ||
@@ -83,7 +86,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       if (code === 'auth/operation-not-allowed') {
         setErrorMsg(
-          'Firebase Console mein Email/Password abhi Enable nahi hai. Niche "Instant Operations Console Access" ya "Continue with Google Admin SSO" button dabayein.'
+          'Firebase Console mein Email/Password abhi Enable nahi hai. Niche "Instant Operations Console Access" ya "Google Admin SSO" button dabayein.'
         );
         setShowConsoleGuide(true);
       } else if (code === 'auth/unauthorized-domain') {
@@ -135,10 +138,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         </a>
 
         <nav className="hidden md:flex items-center gap-6 text-sm text-slate-600 dark:text-slate-400">
-          <span className="whitespace-nowrap shrink-0">Centralized Dispatch</span>
-          <span className="whitespace-nowrap shrink-0">Outstation Tariff Engine</span>
-          <span className="whitespace-nowrap shrink-0">Driver & Fleet KYC</span>
-          <span className="whitespace-nowrap shrink-0">SAC 996412 GST Billing</span>
+          <span className="whitespace-nowrap shrink-0">Bookings & Dispatch</span>
+          <span className="whitespace-nowrap shrink-0">Bill Generator (Mohur & Sign)</span>
+          <span className="whitespace-nowrap shrink-0">Customers & Tariffs</span>
+          <span className="whitespace-nowrap shrink-0">Gateways & AAB/APK</span>
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -155,51 +158,59 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       {/* Main Content Split */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-        {/* Left Column: Operational Overview */}
+        {/* Left Column: Brand Banner & Operational Overview */}
         <div className="lg:col-span-7 space-y-6 order-2 lg:order-1">
+          <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+            <img
+              src={OFFICIAL_BANNER_URL}
+              alt="Safar India Cabs — Your Journey, Our Priority"
+              className="w-full h-44 sm:h-56 object-cover"
+            />
+          </div>
+
           <div className="space-y-3">
             <p className="text-xs font-mono text-amber-700 dark:text-amber-400 tracking-tight">
-              OPERATIONS ADMIN CONSOLE · ADMIN.SAFARINDIACABS.COM
+              OWNER & DISPATCH CONTROL CENTER · ADMIN.SAFARINDIACABS.COM · GSTIN: {OFFICIAL_GSTIN}
             </p>
-            <h1 className="text-2xl sm:text-4xl font-bold text-slate-900 dark:text-slate-100 tracking-tight font-display leading-tight">
-              Enterprise Dispatch, Outstation Tariff, Fleet KYC & GST Accounting
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight font-display leading-tight">
+              Safar India Cabs — A1 Cab Services • North India Operations Console
             </h1>
-            <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed max-w-xl">
-              Command center for safarindiacabs.com: manage live customer ride requests, assign verified chauffeurs to customer &apos;My Rides&apos;, control per-KM outstation rates and ₹200 market discounts, monitor driver KYC & payouts, and issue SAC 996412 GST tax invoices.
+            <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed max-w-xl">
+              Complete Owner & Dispatch Control Center for safarindiacabs.com and com.safarindiacabs.app: manage live bookings, trigger 1-Tap WhatsApp Dispatch, generate Mohur & Signed GST bills ({OFFICIAL_GSTIN}), manage customer records, and download production AAB/APK builds.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <div className="py-3 pr-4">
+            <div className="py-2 pr-4">
               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                01. Centralized Dispatch Control
+                01. Bookings & 1-Tap WhatsApp Dispatch
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                Live booking stream (SIC2601+), 1-click driver assignment to Customer &apos;My Rides&apos;, and status updates (Pending, Confirmed, Completed, Cancelled).
+                Live ride requests, category filters (One-Way, Round-Trip, Local, Airport), driver allotment, and 1-Tap WhatsApp alerts.
               </p>
             </div>
-            <div className="py-3 pr-4">
+            <div className="py-2 pr-4">
               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                02. Outstation Tariff & Commission
+                02. Bill Generator (Mohur & Sign)
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                Per-KM rates for Hatchback, Sedan, SUV, and Innova Crysta, state permit taxes, DA, night charges, and ₹200 competitive discount toggle.
+                Branded GST tax invoices ({OFFICIAL_GSTIN}) with official SafarIndiaCabs logo, circular Mohur stamp, and authorized digital signature.
               </p>
             </div>
-            <div className="py-3 pr-4">
+            <div className="py-2 pr-4">
               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                03. Driver & Fleet Operations
+                03. Customers, Tariffs & Fleet Ops
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                Commercial DL, RC & Insurance verification, active duty tracking (Available, On Trip, Off Duty), driver ratings, and commission payout ledger.
+                Customer directory with travel frequency, outstation per-KM tariff & ₹200 discount engine, and driver KYC ledger.
               </p>
             </div>
-            <div className="py-3 pr-4">
+            <div className="py-2 pr-4">
               <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                04. GST Billing & Excel Exports
+                04. Gateways & Android AAB/APK
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                Automated SAC 996412 5% GST invoice unlock upon trip completion, 20% Advance vs Full Paid reconciliation, and corporate CSV exports.
+                Razorpay/SMS/WhatsApp API config and release management for com.safarindiacabs.app (.AAB, .APK, Keystore).
               </p>
             </div>
           </div>
@@ -259,19 +270,29 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           )}
         </div>
 
-        {/* Right Column: Login Card */}
+        {/* Right Column: Login Card with Official Logo */}
         <div className="lg:col-span-5 order-1 lg:order-2">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-8 space-y-5 shadow-xs">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-                  Operations Admin Sign In
-                </h2>
-                <ShieldCheck className="w-5 h-5 text-amber-500" />
+            <div className="flex items-center gap-3.5 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <img
+                src={OFFICIAL_LOGO_URL}
+                alt="SafarIndiaCabs Official Logo"
+                className="w-16 h-16 object-contain rounded-lg bg-white p-1 border border-slate-200 shrink-0"
+              />
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 font-display">
+                    Owner & Admin Sign In
+                  </h2>
+                  <ShieldCheck className="w-4 h-4 text-amber-500 shrink-0" />
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  A1 Cab Services • North India · GSTIN: <span className="font-mono text-slate-800 dark:text-slate-200">{OFFICIAL_GSTIN}</span>
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  ID: <span className="font-mono text-slate-800 dark:text-slate-200">avinashmishra08548@gmail.com</span> · Pass: <span className="font-mono text-slate-800 dark:text-slate-200">Safar@2026</span>
+                </p>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Default ID: <span className="font-mono text-slate-800 dark:text-slate-200">avinashmishra08548@gmail.com</span> · Pass: <span className="font-mono text-slate-800 dark:text-slate-200">Safar@2026</span>
-              </p>
             </div>
 
             {/* Mode Switcher */}
@@ -322,7 +343,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               </div>
             )}
 
-            {/* Email/Password Form (Pre-filled with default Admin credentials) */}
+            {/* Email/Password Form */}
             <form onSubmit={handleEmailAuth} className="space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor="admin-email" className="block text-xs font-medium text-slate-700 dark:text-slate-300">
@@ -408,8 +429,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       {/* Footer */}
       <footer className="px-4 sm:px-8 py-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 dark:text-slate-400">
-        <div>SafarIndiaCabs Mobility Pvt. Ltd. · Customer & Fleet Operations Control Room</div>
-        <div className="font-mono">GSTIN: 07AABCS4829K1Z5 · SAC: 996412</div>
+        <div>SafarIndiaCabs · A1 Cab Services • N. India · Customer & Fleet Operations Control Room</div>
+        <div className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+          GSTIN: {OFFICIAL_GSTIN} · SAC: 996412
+        </div>
       </footer>
     </div>
   );

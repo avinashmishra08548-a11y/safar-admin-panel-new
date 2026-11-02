@@ -1,5 +1,10 @@
 import React from 'react';
-import { Booking, formatINR } from '../types/safar';
+import {
+  Booking,
+  formatINR,
+  OFFICIAL_GSTIN,
+  OFFICIAL_LOGO_URL,
+} from '../types/safar';
 import { X, Printer, Download, CheckCircle2 } from 'lucide-react';
 
 interface GstInvoiceModalProps {
@@ -26,6 +31,7 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
   };
 
   const handleDownloadInvoiceHtml = () => {
+    const logoUrl = `${window.location.origin}${OFFICIAL_LOGO_URL}`;
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,20 +39,28 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
 <title>GST Tax Invoice - ${invoiceNo} - SafarIndiaCabs</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; padding: 32px; max-width: 820px; margin: 0 auto; }
-  .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand img { width: 68px; height: 68px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 8px; padding: 4px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; font-size: 13px; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 13px; }
   th, td { border-bottom: 1px solid #e2e8f0; padding: 10px 8px; text-align: left; }
   th { background: #f8fafc; font-weight: 600; }
   .num { text-align: right; font-family: monospace; }
   .total-row td { font-weight: 700; font-size: 15px; border-top: 2px solid #0f172a; }
+  .footer-sign { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 28px; padding-top: 16px; border-top: 1px dashed #cbd5e1; }
+  .mohur-box { text-align: center; }
 </style>
 </head>
 <body>
   <div class="header">
-    <div>
-      <h1 style="margin:0;font-size:22px;">SafarIndiaCabs Mobility Pvt. Ltd.</h1>
-      <p style="margin:4px 0 0;font-size:12px;color:#475569;">safarindiacabs.com · GSTIN: 07AABCS4829K1Z5 · SAC Code: 996412</p>
+    <div class="brand">
+      <img src="${logoUrl}" alt="SafarIndiaCabs Logo" />
+      <div>
+        <h1 style="margin:0;font-size:21px;">SafarIndiaCabs · A1 Cab Services (N. India)</h1>
+        <p style="margin:3px 0 0;font-size:12px;color:#475569;">safarindiacabs.com · Your Journey, Our Priority</p>
+        <p style="margin:3px 0 0;font-size:12px;font-family:monospace;font-weight:700;color:#0f172a;">GSTIN: ${OFFICIAL_GSTIN} · SAC Code: 996412</p>
+      </div>
     </div>
     <div style="text-align:right;">
       <div style="font-size:12px;color:#475569;">ORIGINAL FOR RECIPIENT · TAX INVOICE</div>
@@ -125,7 +139,22 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
       </tr>
     </tbody>
   </table>
-  <p style="font-size:12px;color:#475569;">Computer generated GST Tax Invoice issued via admin.safarindiacabs.com. No physical signature required.</p>
+  <div class="footer-sign">
+    <div style="font-size:12px;color:#475569;">
+      <strong>Settlement Summary:</strong><br/>
+      Advance Paid: ${formatINR(booking.advancePaid)} · Balance Collectible: ${formatINR(booking.balanceAmount)}<br/>
+      Official GSTIN: <strong>${OFFICIAL_GSTIN}</strong> · Subject to Delhi NCR Jurisdiction.
+    </div>
+    <div class="mohur-box">
+      <div style="font-size:11px;font-weight:700;color:#1e3a8a;border:2px double #1e3a8a;border-radius:999px;padding:8px 14px;display:inline-block;">
+        SAFAR INDIA CABS • N. INDIA<br/>
+        GSTIN: ${OFFICIAL_GSTIN}<br/>
+        AUTHORIZED MOHUR & SIGN
+      </div>
+      <div style="font-family:cursive;font-size:16px;color:#0f172a;margin-top:4px;">Avinash Mishra</div>
+      <div style="font-size:11px;color:#475569;">Authorized Signatory · SafarIndiaCabs</div>
+    </div>
+  </div>
 </body>
 </html>`;
 
@@ -150,7 +179,7 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
             <span>
               {booking.invoiceReady
                 ? 'Customer Download Enabled on safarindiacabs.com/my-rides'
-                : 'Proforma / Duplicate Tax Invoice Preview'}
+                : 'Official GST Tax Invoice (Mohur & Sign Verified)'}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -181,17 +210,24 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
         </div>
 
         {/* Printable Invoice Area */}
-        <div id="printable-gst-invoice" className="p-6 sm:p-8 space-y-6 bg-white">
+        <div id="printable-gst-invoice" className="p-6 sm:p-8 space-y-6 bg-white text-slate-900">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b border-slate-200">
-            <div>
-              <div className="text-xl font-bold text-slate-900 font-display">
-                SafarIndiaCabs Mobility Pvt. Ltd.
-              </div>
-              <div className="text-xs text-slate-500 mt-1">
-                Connaught Place, New Delhi – 110001 · support@safarindiacabs.com
-              </div>
-              <div className="text-xs font-mono text-slate-700 mt-1">
-                Company GSTIN: 07AABCS4829K1Z5 · SAC: 996412
+            <div className="flex items-start gap-3.5">
+              <img
+                src={OFFICIAL_LOGO_URL}
+                alt="SafarIndiaCabs Official Logo"
+                className="w-16 h-16 object-contain rounded-lg border border-slate-200 p-1 bg-white shrink-0"
+              />
+              <div>
+                <div className="text-xl font-bold text-slate-900 font-display">
+                  SafarIndiaCabs · A1 Cab Services • N. India
+                </div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  New Delhi / North India Dispatch Hub · safarindiacabs.com
+                </div>
+                <div className="text-xs font-mono font-bold text-slate-900 mt-1">
+                  Company GSTIN: {OFFICIAL_GSTIN} · SAC: 996412
+                </div>
               </div>
             </div>
             <div className="sm:text-right">
@@ -312,17 +348,118 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({ booking, onClo
             </table>
           </div>
 
-          {/* Settlement Breakdown */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2 text-xs text-slate-600">
-            <div>
-              <span>Online Advance Paid ({booking.paymentMode}): </span>
-              <strong className="font-mono text-slate-900">{formatINR(booking.advancePaid)}</strong>
-              <span className="mx-2">·</span>
-              <span>Balance Settled on Trip: </span>
-              <strong className="font-mono text-slate-900">{formatINR(booking.balanceAmount)}</strong>
+          {/* Settlement Breakdown + Official Circular Mohur & Digital Signature */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6 pt-3 border-t border-dashed border-slate-200 text-xs text-slate-600">
+            <div className="space-y-1.5">
+              <div>
+                <span>Online Advance Paid ({booking.paymentMode}): </span>
+                <strong className="font-mono text-slate-900">{formatINR(booking.advancePaid)}</strong>
+                <span className="mx-2">·</span>
+                <span>Balance Settled on Trip: </span>
+                <strong className="font-mono text-slate-900">{formatINR(booking.balanceAmount)}</strong>
+              </div>
+              <div className="font-mono text-[11px] text-slate-500">
+                Official GSTIN: {OFFICIAL_GSTIN} · Verified via admin.safarindiacabs.com
+              </div>
             </div>
-            <div className="font-mono text-slate-500">
-              Authorized Signatory · SafarIndiaCabs Mobility Pvt. Ltd.
+
+            {/* Official Circular Mohur Stamp + Digital Sign */}
+            <div className="flex items-center gap-4 self-end sm:self-auto">
+              {/* Circular Mohur SVG Stamp */}
+              <div className="relative w-24 h-24 flex items-center justify-center select-none">
+                <svg viewBox="0 0 120 120" className="w-24 h-24 text-blue-900/85 -rotate-12">
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="54"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="49"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1"
+                    strokeDasharray="3 2"
+                  />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="34"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    id="invoiceTopArc"
+                    d="M 18,60 A 42,42 0 1,1 102,60"
+                    fill="none"
+                  />
+                  <path
+                    id="invoiceBottomArc"
+                    d="M 102,60 A 42,42 0 1,1 18,60"
+                    fill="none"
+                  />
+                  <text fontSize="7.5" fontWeight="700" fill="currentColor" letterSpacing="1.2">
+                    <textPath href="#invoiceTopArc" startOffset="50%" textAnchor="middle">
+                      SAFAR INDIA CABS • N. INDIA
+                    </textPath>
+                  </text>
+                  <text fontSize="6.5" fontWeight="700" fill="currentColor" letterSpacing="0.8">
+                    <textPath href="#invoiceBottomArc" startOffset="50%" textAnchor="middle">
+                      GST: {OFFICIAL_GSTIN}
+                    </textPath>
+                  </text>
+                  <text
+                    x="60"
+                    y="56"
+                    textAnchor="middle"
+                    fontSize="7.5"
+                    fontWeight="800"
+                    fill="currentColor"
+                  >
+                    OFFICIAL
+                  </text>
+                  <text
+                    x="60"
+                    y="66"
+                    textAnchor="middle"
+                    fontSize="6.8"
+                    fontWeight="700"
+                    fill="currentColor"
+                  >
+                    MOHUR STAMP
+                  </text>
+                </svg>
+              </div>
+
+              <div className="text-right">
+                <svg viewBox="0 0 150 44" className="w-32 h-10 text-blue-950 ml-auto">
+                  <path
+                    d="M10,32 C26,12 34,35 50,20 C62,9 70,30 88,16 C104,6 116,28 140,14"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M24,38 L128,34"
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="text-xs font-bold text-slate-900">
+                  Authorized Signatory
+                </div>
+                <div className="text-[11px] font-mono text-slate-500">
+                  SafarIndiaCabs ({OFFICIAL_GSTIN})
+                </div>
+              </div>
             </div>
           </div>
         </div>

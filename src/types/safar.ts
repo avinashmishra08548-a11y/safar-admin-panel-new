@@ -116,6 +116,130 @@ export function clampNumber(val: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(val), min), max);
 }
 
+export const OFFICIAL_GSTIN = '07DQHPA3025F1ZD';
+export const OFFICIAL_SAC_CODE = '996412';
+export const OFFICIAL_LOGO_URL =
+  '/assets/aistudio/file_0000000069908211adc71b630e4b7dee_2c93ef6f.png';
+export const OFFICIAL_BANNER_URL =
+  '/assets/aistudio/Screenshot_20261024_012510_Chrome_60fd6972.jpg';
+export const OFFICIAL_COMPANY_NAME = 'Safar India Cabs';
+export const OFFICIAL_LEGAL_NAME = 'SafarIndiaCabs · A1 Cab Services (N. India)';
+export const OFFICIAL_TAGLINE = 'Your Journey, Our Priority';
+export const ANDROID_PACKAGE_NAME = 'com.safarindiacabs.app';
+
+export interface CustomBillDraft {
+  invoiceNumber: string;
+  bookingId: string;
+  invoiceDate: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  customerGstin: string;
+  billingCompanyName: string;
+  tripType: TripType;
+  pickupCity: string;
+  dropCity: string;
+  pickupDate: string;
+  pickupTime: string;
+  vehicleCategory: VehicleCategory;
+  vehicleModel: string;
+  vehicleNumber: string;
+  driverName: string;
+  driverPhone: string;
+  distanceKm: number;
+  tripDays: number;
+  perKmRate: number;
+  baseFare: number;
+  driverAllowance: number;
+  stateTax: number;
+  nightCharges: number;
+  parkingTollExtra: number;
+  marketDiscount: number;
+  includeGst: boolean;
+  gstPercentage: number;
+  advancePaid: number;
+  paymentMode: PaymentMode;
+  includeMohurStamp: boolean;
+  includeDigitalSign: boolean;
+  authorizedSignatoryName: string;
+  notes: string;
+}
+
+export interface GatewayConfig {
+  razorpayEnabled: boolean;
+  razorpayMode: 'Live' | 'Test';
+  razorpayKeyId: string;
+  razorpayWebhookSecret: string;
+  autoSplitAdvance20Pct: boolean;
+  upiIntentEnabled: boolean;
+  merchantUpiId: string;
+  smsGatewayProvider: 'MSG91' | 'Fast2SMS';
+  smsEnabled: boolean;
+  smsSenderId: string;
+  smsDltEntityId: string;
+  smsBookingTemplateId: string;
+  whatsappApiEnabled: boolean;
+  whatsappBusinessPhone: string;
+  whatsappWabaId: string;
+  autoWhatsappOnDriverAssign: boolean;
+}
+
+export interface AppReleaseInfo {
+  packageName: string;
+  appName: string;
+  versionName: string;
+  versionCode: number;
+  minSdk: number;
+  targetSdk: number;
+  aabSizeMb: string;
+  apkSizeMb: string;
+  lastBuildDate: string;
+  keystoreAlias: string;
+  sha1Fingerprint: string;
+  sha256Fingerprint: string;
+  playStoreTrack: string;
+  adminPinEnabled: boolean;
+  adminSecurityPin: string;
+}
+
+export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
+  razorpayEnabled: true,
+  razorpayMode: 'Live',
+  razorpayKeyId: 'rzp_live_SIC8924A1Cab',
+  razorpayWebhookSecret: 'whsec_safarindiacabs_live_2026',
+  autoSplitAdvance20Pct: true,
+  upiIntentEnabled: true,
+  merchantUpiId: 'safarindiacabs@icici',
+  smsGatewayProvider: 'MSG91',
+  smsEnabled: true,
+  smsSenderId: 'SAFRCB',
+  smsDltEntityId: '1201168492018472910',
+  smsBookingTemplateId: '1207168940182940122',
+  whatsappApiEnabled: true,
+  whatsappBusinessPhone: '+91 98114 27650',
+  whatsappWabaId: 'WABA-SIC-NORTH-INDIA-01',
+  autoWhatsappOnDriverAssign: true,
+};
+
+export const DEFAULT_APP_RELEASE_INFO: AppReleaseInfo = {
+  packageName: 'com.safarindiacabs.app',
+  appName: 'Safar India Cabs - Outstation & Local Taxi',
+  versionName: '2.6.0-prod',
+  versionCode: 46,
+  minSdk: 24,
+  targetSdk: 35,
+  aabSizeMb: '18.4 MB',
+  apkSizeMb: '24.8 MB',
+  lastBuildDate: '2026-11-01 19:30 IST',
+  keystoreAlias: 'safarindiacabs-release-key',
+  sha1Fingerprint: '5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25',
+  sha256Fingerprint:
+    'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
+  playStoreTrack: 'Production (Full Rollout)',
+  adminPinEnabled: false,
+  adminSecurityPin: '2026',
+};
+
 export function formatINR(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
