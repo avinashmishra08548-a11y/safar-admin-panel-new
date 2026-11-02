@@ -315,6 +315,135 @@
         "updatedAt"
       ]
     },
+    "FleetDriver": {
+      "title": "SafarIndiaCabs Fleet Chauffeur & Partner Record",
+      "description": "Tracks driver KYC verification, active duty status, ratings, and payout balances.",
+      "type": "object",
+      "properties": {
+        "driverId": {
+          "type": "string",
+          "description": "Unique driver identifier (e.g. DRV101)",
+          "minLength": 4,
+          "maxLength": 20,
+          "pattern": "^DRV[0-9]{3,8}$"
+        },
+        "driverName": {
+          "type": "string",
+          "description": "Full legal name of the chauffeur",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "driverPhone": {
+          "type": "string",
+          "description": "10-digit Indian mobile number with +91",
+          "minLength": 10,
+          "maxLength": 16,
+          "pattern": "^[0-9+ -]{10,16}$"
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "description": "Commercial registration plate (e.g. DL 01 CAB 6812)",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "vehicleModel": {
+          "type": "string",
+          "description": "Vehicle make and model",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "vehicleCategory": {
+          "type": "string",
+          "description": "Fleet category",
+          "enum": ["Hatchback", "Sedan", "SUV", "Innova Crysta"],
+          "maxLength": 20
+        },
+        "homeBaseCity": {
+          "type": "string",
+          "description": "Primary operating hub city",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "dutyStatus": {
+          "type": "string",
+          "description": "Current live duty availability",
+          "enum": ["Available", "On Trip", "Off Duty"],
+          "maxLength": 20
+        },
+        "kycStatus": {
+          "type": "string",
+          "description": "Document & commercial permit verification status",
+          "enum": ["Verified", "Pending Review", "Expiring Soon"],
+          "maxLength": 20
+        },
+        "dlNumber": {
+          "type": "string",
+          "description": "Commercial Driving License number",
+          "minLength": 4,
+          "maxLength": 25
+        },
+        "rcVerified": {
+          "type": "boolean",
+          "description": "Whether commercial vehicle RC is verified"
+        },
+        "insuranceVerified": {
+          "type": "boolean",
+          "description": "Whether comprehensive commercial insurance is active"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Average customer rating out of 5.0"
+        },
+        "completedTrips": {
+          "type": "number",
+          "description": "Lifetime completed outstation and local trips"
+        },
+        "totalEarnings": {
+          "type": "number",
+          "description": "Cumulative gross trip earnings in INR"
+        },
+        "commissionDeducted": {
+          "type": "number",
+          "description": "SafarIndiaCabs platform commission deducted in INR"
+        },
+        "pendingPayout": {
+          "type": "number",
+          "description": "Unsettled driver payout balance in INR"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID of admin operator managing this fleet record",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update"
+        }
+      },
+      "required": [
+        "driverId",
+        "driverName",
+        "driverPhone",
+        "vehicleNumber",
+        "vehicleModel",
+        "vehicleCategory",
+        "homeBaseCity",
+        "dutyStatus",
+        "kycStatus",
+        "dlNumber",
+        "rcVerified",
+        "insuranceVerified",
+        "rating",
+        "completedTrips",
+        "totalEarnings",
+        "commissionDeducted",
+        "pendingPayout",
+        "createdBy",
+        "updatedAt"
+      ]
+    },
     "AdminUser": {
       "title": "Customer Operations Admin Profile",
       "description": "Authorized admin operator record for admin.safarindiacabs.com",
@@ -361,6 +490,10 @@
     "/tariffs/{tariffId}": {
       "schema": { "$ref": "#/entities/TariffPlan" },
       "description": "Stores outstation per-KM rates, state taxes, driver allowances, night charges, and ₹200 market discount logic per vehicle class."
+    },
+    "/drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/FleetDriver" },
+      "description": "Stores verified fleet chauffeurs, KYC status, active duty availability, ratings, and driver payout balances."
     },
     "/admins/{adminId}": {
       "schema": { "$ref": "#/entities/AdminUser" },

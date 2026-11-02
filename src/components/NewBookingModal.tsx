@@ -27,7 +27,6 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
   onClose,
   onCreateBooking,
 }) => {
-  // Generate next sequential SIC26XX booking ID
   const nextBookingId = useMemo(() => {
     let maxNum = 2606;
     existingBookingIds.forEach((id) => {
@@ -205,21 +204,21 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full overflow-hidden shadow-xl my-8">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-2xl w-full overflow-hidden shadow-xl my-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <h2 className="text-base font-bold text-slate-900 font-display">
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 font-display">
               Create Customer Booking · {nextBookingId}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Computes live fare using active Outstation Tariff & ₹200 Market Discount rules
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition-colors cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -227,25 +226,27 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {errorMsg && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-300">
               {errorMsg}
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Customer Name *</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Customer Name *
+              </label>
               <input
                 type="text"
                 required
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 placeholder="e.g. Rohit Khanna"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Customer Mobile Number *
               </label>
               <input
@@ -254,22 +255,24 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
                 placeholder="+91 98112 34567"
-                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Customer Email *</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Customer Email *
+              </label>
               <input
                 type="email"
                 required
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
                 placeholder="rohit.khanna@company.in"
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Customer GSTIN (Optional)
               </label>
               <input
@@ -277,18 +280,20 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
                 value={customerGstin}
                 onChange={(e) => setCustomerGstin(e.target.value.toUpperCase())}
                 placeholder="07AABCK1234F1Z5"
-                className="w-full px-3 py-2 text-sm font-mono uppercase border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-3 py-2 text-sm font-mono uppercase bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Trip Type</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Trip Type
+              </label>
               <select
                 value={tripType}
                 onChange={(e) => setTripType(e.target.value as TripType)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
               >
                 <option value="Round Trip Outstation">Round Trip Outstation</option>
                 <option value="One Way Outstation">One Way Outstation</option>
@@ -297,11 +302,13 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
               </select>
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Vehicle Class</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Vehicle Class
+              </label>
               <select
                 value={vehicleCategory}
                 onChange={(e) => setVehicleCategory(e.target.value as VehicleCategory)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
               >
                 <option value="Hatchback">Hatchback</option>
                 <option value="Sedan">Sedan</option>
@@ -310,11 +317,13 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
               </select>
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Advance Plan</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Advance Plan
+              </label>
               <select
                 value={paymentMode}
                 onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white"
+                className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"
               >
                 <option value="20% Advance">20% Advance</option>
                 <option value="Full Paid">Full Paid</option>
@@ -324,70 +333,82 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="sm:col-span-2 space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Pickup City</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Pickup City
+              </label>
               <input
                 type="text"
                 required
                 value={pickupCity}
                 onChange={(e) => setPickupCity(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Drop City</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Drop City
+              </label>
               <input
                 type="text"
                 required
                 value={dropCity}
                 onChange={(e) => setDropCity(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Pickup Date</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Pickup Date
+              </label>
               <input
                 type="date"
                 required
                 value={pickupDate}
                 onChange={(e) => setPickupDate(e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Pickup Time</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Pickup Time
+              </label>
               <input
                 type="text"
                 required
                 value={pickupTime}
                 onChange={(e) => setPickupTime(e.target.value)}
-                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Est. Distance (KM)</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Est. Distance (KM)
+              </label>
               <input
                 type="number"
                 min={50}
                 max={20000}
                 value={distanceKm}
                 onChange={(e) => setDistanceKm(Number(e.target.value))}
-                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-slate-700">Duration (Days)</label>
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                Duration (Days)
+              </label>
               <input
                 type="number"
                 min={1}
                 max={60}
                 value={tripDays}
                 onChange={(e) => setTripDays(Number(e.target.value))}
-                className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-lg"
+                className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
               />
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-6 text-xs text-slate-700">
+          <div className="flex flex-wrap items-center gap-6 text-xs text-slate-700 dark:text-slate-300">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -409,16 +430,18 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
           </div>
 
           {/* Computed Tariff Summary */}
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div>
-              <div className="text-slate-500">Base Fare ({fareCalculation.billableKm} KM)</div>
-              <div className="font-mono font-semibold text-slate-900 mt-0.5">
+              <div className="text-slate-500 dark:text-slate-400">
+                Base Fare ({fareCalculation.billableKm} KM)
+              </div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
                 {formatINR(fareCalculation.baseFare)}
               </div>
             </div>
             <div>
-              <div className="text-slate-500">DA + Taxes + Night</div>
-              <div className="font-mono font-semibold text-slate-900 mt-0.5">
+              <div className="text-slate-500 dark:text-slate-400">DA + Taxes + Night</div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
                 {formatINR(
                   fareCalculation.driverAllowance +
                     fareCalculation.stateTax +
@@ -427,31 +450,33 @@ export const NewBookingModal: React.FC<NewBookingModalProps> = ({
               </div>
             </div>
             <div>
-              <div className="text-slate-500">Market Discount & 5% GST</div>
-              <div className="font-mono font-semibold text-slate-900 mt-0.5">
+              <div className="text-slate-500 dark:text-slate-400">Market Discount & 5% GST</div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-slate-100 mt-0.5">
                 -{formatINR(fareCalculation.marketDiscount)} / +{formatINR(fareCalculation.gstAmount)}
               </div>
             </div>
             <div>
-              <div className="text-slate-500">Total Payable ({paymentMode})</div>
-              <div className="font-mono font-bold text-slate-900 text-sm mt-0.5">
+              <div className="text-slate-500 dark:text-slate-400">
+                Total Payable ({paymentMode})
+              </div>
+              <div className="font-mono font-bold text-slate-900 dark:text-amber-400 text-sm mt-0.5">
                 {formatINR(fareCalculation.totalFare)} (Adv: {formatINR(fareCalculation.advancePaid)})
               </div>
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              className="px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               <span>{submitting ? 'Saving Booking...' : 'Create Customer Booking'}</span>

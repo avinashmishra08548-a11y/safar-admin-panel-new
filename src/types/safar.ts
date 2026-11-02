@@ -9,6 +9,8 @@ export type TripType =
   | 'Local 8Hr/80Km'
   | 'Airport Transfer';
 export type PaymentMode = '20% Advance' | 'Full Paid';
+export type DriverDutyStatus = 'Available' | 'On Trip' | 'Off Duty';
+export type DriverKycStatus = 'Verified' | 'Pending Review' | 'Expiring Soon';
 
 export interface Booking {
   bookingId: string;
@@ -65,9 +67,31 @@ export interface TariffPlan {
   updatedAt?: Timestamp | null;
 }
 
-// Verbatim validation constants synced with firebase-blueprint.json and firestore.rules
+export interface FleetDriver {
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  vehicleNumber: string;
+  vehicleModel: string;
+  vehicleCategory: VehicleCategory;
+  homeBaseCity: string;
+  dutyStatus: DriverDutyStatus;
+  kycStatus: DriverKycStatus;
+  dlNumber: string;
+  rcVerified: boolean;
+  insuranceVerified: boolean;
+  rating: number;
+  completedTrips: number;
+  totalEarnings: number;
+  commissionDeducted: number;
+  pendingPayout: number;
+  createdBy: string;
+  updatedAt?: Timestamp | null;
+}
+
 export const BLUEPRINT_CONSTRAINTS = {
   BOOKING_ID_REGEX: /^SIC[0-9]{4,10}$/,
+  DRIVER_ID_REGEX: /^DRV[0-9]{3,8}$/,
   PHONE_REGEX: /^[0-9+ -]{10,16}$/,
   DATE_REGEX: /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/,
   MAX_CUSTOMER_NAME: 80,
@@ -80,6 +104,7 @@ export const BLUEPRINT_CONSTRAINTS = {
   MAX_VEHICLE_MODEL: 60,
   MAX_INVOICE_NUMBER: 32,
   MAX_SAMPLE_MODELS: 100,
+  MAX_DL_NUMBER: 25,
 } as const;
 
 export function sanitizeString(val: string, maxLength: number): string {
@@ -122,7 +147,6 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
     seatingCapacity: 4,
     baseRatePerKm: 13,
     oneWayRatePerKm: 15,
-    minKmPerKm: 250,
     minKmPerDay: 250,
     driverAllowancePerDay: 350,
     nightChargeDefault: 300,
@@ -130,7 +154,7 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
     gstPercentage: 5,
     marketDiscountEnabled: true,
     marketDiscountAmount: 200,
-  } as Omit<TariffPlan, 'createdBy' | 'updatedAt'>,
+  },
   {
     categoryId: 'suv',
     vehicleCategory: 'SUV',
@@ -160,6 +184,123 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
     gstPercentage: 5,
     marketDiscountEnabled: true,
     marketDiscountAmount: 200,
+  },
+];
+
+export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [
+  {
+    driverId: 'DRV101',
+    driverName: 'Mahendra Singh Rathore',
+    driverPhone: '+91 94140 88211',
+    vehicleNumber: 'HR 55 AN 3319',
+    vehicleModel: 'Toyota Innova Crysta ZX',
+    vehicleCategory: 'Innova Crysta',
+    homeBaseCity: 'Delhi NCR / Gurugram',
+    dutyStatus: 'On Trip',
+    kycStatus: 'Verified',
+    dlNumber: 'HR0620140098412',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.9,
+    completedTrips: 342,
+    totalEarnings: 845000,
+    commissionDeducted: 101400,
+    pendingPayout: 14200,
+  },
+  {
+    driverId: 'DRV102',
+    driverName: 'Rajendra Prasad Verma',
+    driverPhone: '+91 98182 74105',
+    vehicleNumber: 'DL 01 CAB 6812',
+    vehicleModel: 'Maruti Swift Dzire Tour S',
+    vehicleCategory: 'Sedan',
+    homeBaseCity: 'New Delhi',
+    dutyStatus: 'Available',
+    kycStatus: 'Verified',
+    dlNumber: 'DL0420160184720',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.8,
+    completedTrips: 289,
+    totalEarnings: 512000,
+    commissionDeducted: 61440,
+    pendingPayout: 6850,
+  },
+  {
+    driverId: 'DRV103',
+    driverName: 'Suresh Kumar Yadav',
+    driverPhone: '+91 97654 11209',
+    vehicleNumber: 'MH 12 QN 8492',
+    vehicleModel: 'Toyota Innova Crysta 2.4 GX',
+    vehicleCategory: 'Innova Crysta',
+    homeBaseCity: 'Mumbai / Pune',
+    dutyStatus: 'On Trip',
+    kycStatus: 'Verified',
+    dlNumber: 'MH1220150073190',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.9,
+    completedTrips: 410,
+    totalEarnings: 980000,
+    commissionDeducted: 117600,
+    pendingPayout: 9400,
+  },
+  {
+    driverId: 'DRV104',
+    driverName: 'Balwinder Singh Gill',
+    driverPhone: '+91 98721 44901',
+    vehicleNumber: 'PB 01 D 7732',
+    vehicleModel: 'Maruti Suzuki Ertiga ZXi',
+    vehicleCategory: 'SUV',
+    homeBaseCity: 'Chandigarh / Shimla',
+    dutyStatus: 'Available',
+    kycStatus: 'Verified',
+    dlNumber: 'PB6520170042911',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.7,
+    completedTrips: 198,
+    totalEarnings: 428000,
+    commissionDeducted: 51360,
+    pendingPayout: 4200,
+  },
+  {
+    driverId: 'DRV105',
+    driverName: 'Deepak Kumar Sharma',
+    driverPhone: '+91 98104 55210',
+    vehicleNumber: 'DL 1Z A 4921',
+    vehicleModel: 'Maruti WagonR Tour H3 CNG',
+    vehicleCategory: 'Hatchback',
+    homeBaseCity: 'Noida / Delhi NCR',
+    dutyStatus: 'Available',
+    kycStatus: 'Pending Review',
+    dlNumber: 'UP1620190051823',
+    rcVerified: true,
+    insuranceVerified: false,
+    rating: 4.6,
+    completedTrips: 94,
+    totalEarnings: 164000,
+    commissionDeducted: 19680,
+    pendingPayout: 3150,
+  },
+  {
+    driverId: 'DRV106',
+    driverName: 'Ramesh Gowda H',
+    driverPhone: '+91 94481 73920',
+    vehicleNumber: 'KA 03 MP 5104',
+    vehicleModel: 'Maruti Suzuki Ertiga ZXi+',
+    vehicleCategory: 'SUV',
+    homeBaseCity: 'Bengaluru / Mysuru',
+    dutyStatus: 'Available',
+    kycStatus: 'Verified',
+    dlNumber: 'KA0320160081204',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.9,
+    completedTrips: 315,
+    totalEarnings: 690000,
+    commissionDeducted: 82800,
+    pendingPayout: 0,
   },
 ];
 

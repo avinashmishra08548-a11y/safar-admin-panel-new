@@ -1,9 +1,15 @@
 import React, { useState } from 'react';
-import { Booking, BLUEPRINT_CONSTRAINTS, sanitizeString } from '../types/safar';
+import {
+  Booking,
+  FleetDriver,
+  BLUEPRINT_CONSTRAINTS,
+  sanitizeString,
+} from '../types/safar';
 import { X, UserCheck, Phone, Car, CheckCircle2, Smartphone } from 'lucide-react';
 
 interface AssignDriverModalProps {
   booking: Booking;
+  fleetDrivers: FleetDriver[];
   onClose: () => void;
   onSave: (
     bookingId: string,
@@ -17,70 +23,9 @@ interface AssignDriverModalProps {
   ) => Promise<void>;
 }
 
-const FLEET_CHAUFFEUR_PRESETS: Record<
-  Booking['vehicleCategory'],
-  { driverName: string; driverPhone: string; vehicleNumber: string; vehicleModel: string }[]
-> = {
-  Hatchback: [
-    {
-      driverName: 'Deepak Kumar Sharma',
-      driverPhone: '+91 98104 55210',
-      vehicleNumber: 'DL 1Z A 4921',
-      vehicleModel: 'Maruti WagonR Tour H3 CNG',
-    },
-    {
-      driverName: 'Santosh Yadav',
-      driverPhone: '+91 97118 30492',
-      vehicleNumber: 'UP 16 KT 2190',
-      vehicleModel: 'Tata Tiago XZ+',
-    },
-  ],
-  Sedan: [
-    {
-      driverName: 'Rajendra Prasad Verma',
-      driverPhone: '+91 98182 74105',
-      vehicleNumber: 'DL 01 CAB 6812',
-      vehicleModel: 'Maruti Swift Dzire Tour S',
-    },
-    {
-      driverName: 'Harish Chandra Singh',
-      driverPhone: '+91 99105 63821',
-      vehicleNumber: 'HR 38 AB 9044',
-      vehicleModel: 'Toyota Etios Platinum VX',
-    },
-  ],
-  SUV: [
-    {
-      driverName: 'Balwinder Singh Gill',
-      driverPhone: '+91 98721 44901',
-      vehicleNumber: 'PB 01 D 7732',
-      vehicleModel: 'Maruti Suzuki Ertiga ZXi',
-    },
-    {
-      driverName: 'Rameshwar Gurjar',
-      driverPhone: '+91 94142 91038',
-      vehicleNumber: 'RJ 14 TC 5581',
-      vehicleModel: 'Kia Carens Prestige 7-Str',
-    },
-  ],
-  'Innova Crysta': [
-    {
-      driverName: 'Mahendra Singh Rathore',
-      driverPhone: '+91 94140 88211',
-      vehicleNumber: 'HR 55 AN 3319',
-      vehicleModel: 'Toyota Innova Crysta 2.4 GX',
-    },
-    {
-      driverName: 'Suresh Kumar Yadav',
-      driverPhone: '+91 97654 11209',
-      vehicleNumber: 'MH 12 QN 8492',
-      vehicleModel: 'Toyota Innova Crysta ZX Captain',
-    },
-  ],
-};
-
 export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   booking,
+  fleetDrivers,
   onClose,
   onSave,
 }) => {
@@ -96,13 +41,18 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const presets = FLEET_CHAUFFEUR_PRESETS[booking.vehicleCategory] || [];
+  // Prioritize drivers matching the booked vehicle category, then show all verified drivers
+  const matchingDrivers = fleetDrivers.filter(
+    (d) => d.vehicleCategory === booking.vehicleCategory
+  );
+  const quickPickDrivers =
+    matchingDrivers.length > 0 ? matchingDrivers : fleetDrivers.slice(0, 4);
 
-  const handleApplyPreset = (preset: (typeof presets)[0]) => {
-    setDriverName(preset.driverName);
-    setDriverPhone(preset.driverPhone);
-    setVehicleNumber(preset.vehicleNumber);
-    setVehicleModel(preset.vehicleModel);
+  const handleApplyDriver = (drv: FleetDriver) => {
+    setDriverName(drv.driverName);
+    setDriverPhone(drv.driverPhone);
+    setVehicleNumber(drv.vehicleNumber);
+    setVehicleModel(drv.vehicleModel);
     setValidationError(null);
   };
 
@@ -148,52 +98,59 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full overflow-hidden shadow-xl">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl max-w-2xl w-full overflow-hidden shadow-xl my-8">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
           <div>
-            <h2 className="text-base font-bold text-slate-900 font-display">
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 font-display">
               Assign Chauffeur & Vehicle · {booking.bookingId}
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               Syncs immediately to {booking.customerName}&apos;s &apos;My Rides&apos; screen on safarindiacabs.com
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg transition-colors cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Quick Dispatch Presets */}
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-slate-600">
-              Quick Fill Verified {booking.vehicleCategory} Chauffeur from Fleet Pool
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {presets.map((preset) => (
-                <button
-                  key={preset.vehicleNumber}
-                  type="button"
-                  onClick={() => handleApplyPreset(preset)}
-                  className="text-left p-2.5 rounded-lg border border-slate-200 hover:border-slate-400 bg-slate-50/70 transition-colors cursor-pointer"
-                >
-                  <div className="text-xs font-semibold text-slate-900">{preset.driverName}</div>
-                  <div className="text-xs text-slate-500 font-mono mt-0.5">
-                    {preset.vehicleNumber} · {preset.driverPhone}
-                  </div>
-                </button>
-              ))}
+          {/* Quick Dispatch Pool from Live Fleet Drivers */}
+          {quickPickDrivers.length > 0 && (
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+                Select Verified {booking.vehicleCategory} Chauffeur from Active Fleet Pool
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {quickPickDrivers.map((drv) => (
+                  <button
+                    key={drv.driverId}
+                    type="button"
+                    onClick={() => handleApplyDriver(drv)}
+                    className="text-left p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-amber-500 bg-slate-50/70 dark:bg-slate-800/60 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-900 dark:text-slate-100">
+                      <span>{drv.driverName}</span>
+                      <span className="font-mono text-amber-600 dark:text-amber-400">
+                        {drv.rating.toFixed(1)} ★
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                      {drv.vehicleNumber} · {drv.dutyStatus} · {drv.kycStatus}
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {validationError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-300">
               {validationError}
             </div>
           )}
@@ -201,7 +158,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
           {/* Manual Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Driver Full Name *
               </label>
               <div className="relative">
@@ -213,13 +170,13 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   value={driverName}
                   onChange={(e) => setDriverName(e.target.value)}
                   placeholder="e.g. Rajendra Prasad Verma"
-                  className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Driver Mobile Number *
               </label>
               <div className="relative">
@@ -231,13 +188,13 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   value={driverPhone}
                   onChange={(e) => setDriverPhone(e.target.value)}
                   placeholder="+91 98182 74105"
-                  className="w-full pl-9 pr-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full pl-9 pr-3 py-2 text-sm font-mono bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Vehicle Registration Plate *
               </label>
               <div className="relative">
@@ -249,13 +206,13 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   value={vehicleNumber}
                   onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
                   placeholder="DL 01 CAB 6812"
-                  className="w-full pl-9 pr-3 py-2 text-sm font-mono uppercase bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full pl-9 pr-3 py-2 text-sm font-mono uppercase bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-slate-700">
+              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                 Dispatched Car Model
               </label>
               <input
@@ -264,18 +221,18 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 value={vehicleModel}
                 onChange={(e) => setVehicleModel(e.target.value)}
                 placeholder="Maruti Swift Dzire Tour S"
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
+                className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
               />
             </div>
           </div>
 
           {booking.status === 'Pending' && (
-            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+            <label className="flex items-center gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={markConfirmed}
                 onChange={(e) => setMarkConfirmed(e.target.checked)}
-                className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                className="rounded border-slate-300"
               />
               <span>
                 Automatically transition booking status from <strong>Pending</strong> to <strong>Confirmed</strong> upon driver assignment
@@ -284,7 +241,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
           )}
 
           {/* Customer 'My Rides' Real-Time Card Preview */}
-          <div className="p-4 rounded-xl bg-slate-900 text-white space-y-2.5">
+          <div className="p-4 rounded-xl bg-slate-900 dark:bg-slate-950 border border-slate-800 text-white space-y-2.5">
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="inline-flex items-center gap-1.5">
                 <Smartphone className="w-3.5 h-3.5 text-amber-400" />
@@ -315,11 +272,11 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+              className="px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>

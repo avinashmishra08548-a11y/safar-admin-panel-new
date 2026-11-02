@@ -128,6 +128,48 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidFleetDriverIdentity(data) {
+      return data.driverId is string && data.driverId.size() >= 4 && data.driverId.size() <= 20 && data.driverId.matches('^DRV[0-9]{3,8}$') &&
+        data.driverName is string && data.driverName.size() >= 2 && data.driverName.size() <= 80 &&
+        data.driverPhone is string && data.driverPhone.size() >= 10 && data.driverPhone.size() <= 16 && data.driverPhone.matches('^[0-9+ -]{10,16}$') &&
+        data.vehicleNumber is string && data.vehicleNumber.size() >= 4 && data.vehicleNumber.size() <= 20 &&
+        data.vehicleModel is string && data.vehicleModel.size() >= 2 && data.vehicleModel.size() <= 60 &&
+        data.vehicleCategory is string && data.vehicleCategory.size() <= 20 && data.vehicleCategory in ['Hatchback', 'Sedan', 'SUV', 'Innova Crysta'] &&
+        data.homeBaseCity is string && data.homeBaseCity.size() >= 2 && data.homeBaseCity.size() <= 80;
+    }
+
+    function isValidFleetDriverCompliance(data) {
+      return data.dutyStatus is string && data.dutyStatus.size() <= 20 && data.dutyStatus in ['Available', 'On Trip', 'Off Duty'] &&
+        data.kycStatus is string && data.kycStatus.size() <= 20 && data.kycStatus in ['Verified', 'Pending Review', 'Expiring Soon'] &&
+        data.dlNumber is string && data.dlNumber.size() >= 4 && data.dlNumber.size() <= 25 &&
+        data.rcVerified is bool &&
+        data.insuranceVerified is bool &&
+        data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+        data.completedTrips is number && data.completedTrips >= 0 && data.completedTrips <= 50000 &&
+        data.totalEarnings is number && data.totalEarnings >= 0 && data.totalEarnings <= 50000000 &&
+        data.commissionDeducted is number && data.commissionDeducted >= 0 && data.commissionDeducted <= 10000000 &&
+        data.pendingPayout is number && data.pendingPayout >= 0 && data.pendingPayout <= 10000000 &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidFleetDriver(data) {
+      return data.keys().hasAll([
+        'driverId', 'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel',
+        'vehicleCategory', 'homeBaseCity', 'dutyStatus', 'kycStatus', 'dlNumber',
+        'rcVerified', 'insuranceVerified', 'rating', 'completedTrips',
+        'totalEarnings', 'commissionDeducted', 'pendingPayout', 'createdBy', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'driverId', 'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel',
+        'vehicleCategory', 'homeBaseCity', 'dutyStatus', 'kycStatus', 'dlNumber',
+        'rcVerified', 'insuranceVerified', 'rating', 'completedTrips',
+        'totalEarnings', 'commissionDeducted', 'pendingPayout', 'createdBy', 'updatedAt'
+      ]) &&
+      isValidFleetDriverIdentity(data) &&
+      isValidFleetDriverCompliance(data);
+    }
+
     function isValidAdminUser(data) {
       return data.keys().hasAll(['uid', 'email', 'name', 'role', 'createdAt']) &&
       data.keys().hasOnly(['uid', 'email', 'name', 'role', 'createdAt']) &&
@@ -219,6 +261,45 @@ service cloud.firestore {
         );
 
       allow delete: if isVerified() && isValidId(tariffId) && isAdmin();
+    }
+
+    match /drivers/{driverId} {
+      allow get: if isVerified() && isValidId(driverId) && (
+        existing().createdBy == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isVerified() && (
+        resource.data.createdBy == request.auth.uid || isBootstrappedAdmin()
+      );
+
+      allow create: if isVerified() &&
+        isValidId(driverId) &&
+        isValidFleetDriver(incoming()) &&
+        incoming().driverId == driverId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerified() &&
+        isValidId(driverId) &&
+        isValidFleetDriver(incoming()) &&
+        incoming().driverId == existing().driverId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().createdBy == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel',
+              'vehicleCategory', 'homeBaseCity', 'dutyStatus', 'kycStatus',
+              'dlNumber', 'rcVerified', 'insuranceVerified', 'rating',
+              'completedTrips', 'totalEarnings', 'commissionDeducted',
+              'pendingPayout', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerified() && isValidId(driverId) && isAdmin();
     }
 
     match /admins/{adminId} {

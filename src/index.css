@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
@@ -9,8 +10,6 @@
 
   body {
     font-family: var(--font-sans);
-    color: #0f172a;
-    background-color: #f8fafc;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
@@ -39,5 +38,7 @@
     width: 100%;
     box-shadow: none !important;
     border: none !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
   }
 }
