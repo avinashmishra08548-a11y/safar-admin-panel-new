@@ -51,7 +51,6 @@ import { LoginScreen } from './components/LoginScreen';
 import { AssignDriverModal } from './components/AssignDriverModal';
 import { GstInvoiceModal } from './components/GstInvoiceModal';
 import { CustomerMyRidesDrawer } from './components/CustomerMyRidesDrawer';
-import { NewBookingModal } from './components/NewBookingModal';
 import { AddDriverModal } from './components/AddDriverModal';
 import { WhatsAppDispatchModal } from './components/WhatsAppDispatchModal';
 import { BillGeneratorModule } from './components/BillGeneratorModule';
@@ -365,7 +364,6 @@ function AdminDashboard() {
     useState<Booking | null>(null);
   const [myRidesPreviewTarget, setMyRidesPreviewTarget] =
     useState<Booking | null>(null);
-  const [showNewBookingModal, setShowNewBookingModal] = useState(false);
   const [showAddDriverModal, setShowAddDriverModal] = useState(false);
 
   // Tariff Editor Draft State
@@ -580,65 +578,6 @@ function AdminDashboard() {
         await deleteDoc(doc(db, 'bookings', bookingId));
       } catch (err) {
         logFirestoreSyncWarning(err, OperationType.DELETE, path);
-      }
-    }
-  };
-
-  // Create new booking handler — Instant Optimistic Update + Resilient Cloud Sync
-  const handleCreateBooking = async (
-    newBooking: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>
-  ) => {
-    // Ensure collision-free Booking ID
-    let finalBookingId = newBooking.bookingId;
-    const existingIds = new Set(bookings.map((b) => b.bookingId));
-    if (existingIds.has(finalBookingId)) {
-      let maxNum = 2606;
-      bookings.forEach((b) => {
-        const num = parseInt(b.bookingId.replace(/\D/g, ''), 10);
-        if (!Number.isNaN(num) && num > maxNum) maxNum = num;
-      });
-      finalBookingId = `SIC${maxNum + 1}`;
-    }
-
-    const created: Booking = {
-      ...newBooking,
-      bookingId: finalBookingId,
-      createdBy: user?.uid || 'direct_admin',
-    };
-
-    // 1. Optimistically update state & localStorage immediately so UI updates 100% instantly
-    const updatedList = [
-      created,
-      ...bookings.filter(
-        (b) => b.bookingId !== finalBookingId && !isSampleDemoBooking(b)
-      ),
-    ];
-    setBookings(updatedList);
-    localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
-
-    // Reset active filters so the newly created booking is immediately visible at top of table
-    setSearchQuery('');
-    setPickupDateFilter('');
-    setStatusFilter('All');
-    setCategoryFilter('All');
-
-    showToast(
-      `Booking ${finalBookingId} created for ${created.customerName} (${formatINR(created.totalFare)}) · Sent WhatsApp Cloud API confirmation.`
-    );
-
-    // 2. Sync to Firestore in background if authenticated
-    if (isFirebaseVerifiedSession && user) {
-      const path = `bookings/${finalBookingId}`;
-      try {
-        await setDoc(doc(db, 'bookings', finalBookingId), {
-          ...newBooking,
-          bookingId: finalBookingId,
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        logFirestoreSyncWarning(err, OperationType.CREATE, path);
       }
     }
   };
@@ -1627,15 +1566,16 @@ function AdminDashboard() {
           </button>
         </nav>
 
-        {/* Zone 3: 1 primary action */}
+        {/* Zone 3: Primary action */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => setShowNewBookingModal(true)}
+            onClick={handleSeedInitialOperationsData}
+            disabled={seedingData}
             className="px-3.5 sm:px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
           >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>+ Create Booking</span>
+            <RefreshCw className={`w-3.5 h-3.5 stroke-[2.5] ${seedingData ? 'animate-spin' : ''}`} />
+            <span>{seedingData ? 'Syncing...' : 'Sync Live Bookings'}</span>
           </button>
         </div>
       </header>
@@ -2132,7 +2072,6 @@ function AdminDashboard() {
               vehicles={vehicles}
               tickets={supportTickets}
               tariffs={tariffs}
-              onOpenNewBooking={() => setShowNewBookingModal(true)}
               onOpenAddDriver={() => setShowAddDriverModal(true)}
               onSwitchModule={(mod) => setActiveModule(mod as ActiveModule)}
               onSelectBookingForDetails={(b: Booking) =>
@@ -2158,14 +2097,6 @@ function AdminDashboard() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowNewBookingModal(true)}
-                    className="px-3.5 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
-                  >
-                    <Plus className="w-4 h-4 stroke-[2.5]" />
-                    <span>+ Create Booking</span>
-                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveModule('bill-generator')}
@@ -2307,7 +2238,7 @@ function AdminDashboard() {
                     No customer bookings match your current filter
                   </div>
                   <p className="text-xs font-medium text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                    Reset filters or create a new customer booking using the button above.
+                    Live bookings placed by customers via the SafarIndiaCabs Android App or Website will automatically appear here in real time.
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                     <button
@@ -2324,10 +2255,10 @@ function AdminDashboard() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowNewBookingModal(true)}
+                      onClick={handleSeedInitialOperationsData}
                       className="px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer"
                     >
-                      + Create New Booking
+                      Sync Live Bookings
                     </button>
                   </div>
                 </div>
@@ -3897,16 +3828,6 @@ function AdminDashboard() {
           onOpenInvoice={(b) => {
             setInvoiceTarget(b);
           }}
-        />
-      )}
-
-      {showNewBookingModal && (
-        <NewBookingModal
-          tariffs={tariffs}
-          fleetDrivers={drivers}
-          existingBookingIds={bookings.map((b) => b.bookingId)}
-          onClose={() => setShowNewBookingModal(false)}
-          onCreateBooking={handleCreateBooking}
         />
       )}
 

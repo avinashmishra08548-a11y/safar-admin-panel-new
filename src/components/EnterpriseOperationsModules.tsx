@@ -54,7 +54,6 @@ interface ExecutiveDashboardProps {
   vehicles: FleetVehicle[];
   tickets: SupportTicket[];
   tariffs: TariffPlan[];
-  onOpenNewBooking: () => void;
   onOpenAddDriver: () => void;
   onSwitchModule: (module: string) => void;
   onSelectBookingForAssign: (booking: Booking) => void;
@@ -66,7 +65,6 @@ export const ExecutiveDashboardOverview: React.FC<ExecutiveDashboardProps> = ({
   drivers,
   vehicles,
   tickets,
-  onOpenNewBooking,
   onOpenAddDriver,
   onSwitchModule,
   onSelectBookingForAssign,
@@ -223,16 +221,8 @@ export const ExecutiveDashboardOverview: React.FC<ExecutiveDashboardProps> = ({
           </p>
         </div>
 
-        {/* Quick Actions Bar (All 7 requested quick actions) */}
+        {/* Quick Actions Bar */}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={onOpenNewBooking}
-            className="px-3.5 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>Create Booking</span>
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -244,9 +234,9 @@ export const ExecutiveDashboardOverview: React.FC<ExecutiveDashboardProps> = ({
                 onSwitchModule('control-room');
               }
             }}
-            className="px-3 py-2 text-xs font-extrabold text-white bg-slate-900 hover:bg-slate-800 rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-3.5 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
           >
-            <UserPlus className="w-3.5 h-3.5 text-amber-400" />
+            <UserPlus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>Assign Driver</span>
           </button>
           <button
