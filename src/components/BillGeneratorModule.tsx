@@ -4,12 +4,25 @@ import {
   CustomBillDraft,
   TripType,
   VehicleCategory,
-  PaymentMode,
   formatINR,
+  OFFICIAL_COMPANY_NAME,
+  OFFICIAL_LEGAL_NAME,
   OFFICIAL_GSTIN,
+  OFFICIAL_SAC_CODE,
+  OFFICIAL_PROPRIETOR,
+  OFFICIAL_EMAIL,
+  OFFICIAL_HELPLINE,
+  OFFICIAL_REGISTERED_ADDRESS,
+  OFFICIAL_ADMIN_PORTAL_URL,
   OFFICIAL_LOGO_URL,
   OFFICIAL_BANNER_URL,
 } from '../types/safar';
+import {
+  bookingToStandardBillDraft,
+  downloadBillAsPdf,
+  shareBillPdfOnWhatsApp,
+  getFormattedDigitalSignTimestamp,
+} from '../lib/pdfAndApis';
 import {
   Printer,
   Download,
@@ -25,50 +38,6 @@ interface BillGeneratorModuleProps {
   bookings: Booking[];
   initialBooking?: Booking | null;
   onShowToast: (msg: string) => void;
-}
-
-function bookingToBillDraft(b: Booking): CustomBillDraft {
-  return {
-    invoiceNumber:
-      b.invoiceNumber || `INV-SIC-2026-${b.bookingId.replace('SIC', '')}`,
-    bookingId: b.bookingId,
-    invoiceDate: b.pickupDate || new Date().toISOString().slice(0, 10),
-    customerName: b.customerName,
-    customerPhone: b.customerPhone,
-    customerEmail: b.customerEmail,
-    customerGstin: b.customerGstin || '',
-    billingCompanyName: b.customerGstin
-      ? `${b.customerName} Corporate A/C`
-      : '',
-    tripType: b.tripType,
-    pickupCity: b.pickupCity,
-    dropCity: b.dropCity,
-    pickupDate: b.pickupDate,
-    pickupTime: b.pickupTime,
-    vehicleCategory: b.vehicleCategory,
-    vehicleModel: b.vehicleModel || `${b.vehicleCategory} AC`,
-    vehicleNumber: b.vehicleNumber || 'DL 01 CAB 6812',
-    driverName: b.driverName || 'Rajendra Prasad Verma',
-    driverPhone: b.driverPhone || '+91 98182 74105',
-    distanceKm: b.distanceKm,
-    tripDays: b.tripDays,
-    perKmRate: b.perKmRate,
-    baseFare: b.baseFare,
-    driverAllowance: b.driverAllowance,
-    stateTax: b.stateTax,
-    nightCharges: b.nightCharges,
-    parkingTollExtra: 0,
-    marketDiscount: b.marketDiscount,
-    includeGst: true,
-    gstPercentage: 5,
-    advancePaid: b.advancePaid,
-    paymentMode: b.paymentMode,
-    includeMohurStamp: true,
-    includeDigitalSign: true,
-    authorizedSignatoryName: 'Avinash Mishra',
-    notes:
-      'Thank you for travelling with Safar India Cabs (A1 Cab Services • N. India). Subject to Delhi NCR Jurisdiction.',
-  };
 }
 
 const DEFAULT_CUSTOM_BILL: CustomBillDraft = {
@@ -105,9 +74,9 @@ const DEFAULT_CUSTOM_BILL: CustomBillDraft = {
   paymentMode: '20% Advance',
   includeMohurStamp: true,
   includeDigitalSign: true,
-  authorizedSignatoryName: 'Avinash Mishra',
-  notes:
-    'Thank you for travelling with Safar India Cabs (A1 Cab Services • N. India). Subject to Delhi NCR Jurisdiction.',
+  authorizedSignatoryName: OFFICIAL_PROPRIETOR,
+  digitalSignatureTimestamp: getFormattedDigitalSignTimestamp(),
+  notes: `Registered Office: ${OFFICIAL_REGISTERED_ADDRESS}. Helpline: ${OFFICIAL_HELPLINE}. Subject to Delhi Jurisdiction.`,
 };
 
 export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
@@ -117,16 +86,18 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
 }) => {
   const [draft, setDraft] = useState<CustomBillDraft>(() =>
     initialBooking
-      ? bookingToBillDraft(initialBooking)
+      ? bookingToStandardBillDraft(initialBooking)
       : bookings[0]
-      ? bookingToBillDraft(bookings[0])
+      ? bookingToStandardBillDraft(bookings[0])
       : DEFAULT_CUSTOM_BILL
   );
   const [showBannerInBill, setShowBannerInBill] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [sharingPdfWa, setSharingPdfWa] = useState(false);
 
   useEffect(() => {
     if (initialBooking) {
-      setDraft(bookingToBillDraft(initialBooking));
+      setDraft(bookingToStandardBillDraft(initialBooking));
     }
   }, [initialBooking]);
 
@@ -139,6 +110,11 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
       if (key === 'distanceKm' || key === 'perKmRate') {
         next.baseFare = Math.round(
           Number(next.distanceKm) * Number(next.perKmRate)
+        );
+      }
+      if (key === 'invoiceDate') {
+        next.digitalSignatureTimestamp = getFormattedDigitalSignTimestamp(
+          String(value)
         );
       }
       return next;
@@ -162,260 +138,95 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
   const grandTotal = taxableAmount + gstAmount;
   const balanceDue = Math.max(0, grandTotal - Number(draft.advancePaid));
 
+  const digitalSignTimestamp =
+    draft.digitalSignatureTimestamp ||
+    getFormattedDigitalSignTimestamp(draft.invoiceDate);
+
+  const handleDownloadRealPdf = async () => {
+    setGeneratingPdf(true);
+    try {
+      const fileName = await downloadBillAsPdf(draft);
+      onShowToast(
+        `Downloaded Official Digitally Signed GST Invoice PDF (${fileName}).`
+      );
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  const handleSharePdfOnWhatsApp = async () => {
+    setSharingPdfWa(true);
+    try {
+      const res = await shareBillPdfOnWhatsApp(draft);
+      if (res.sharedViaNativeFile) {
+        onShowToast(
+          `Shared real PDF file (${res.fileName}) directly to WhatsApp.`
+        );
+      } else {
+        onShowToast(
+          `Generated & downloaded real PDF (${res.fileName}) + sent WhatsApp Cloud API notification to ${draft.customerPhone}.`
+        );
+      }
+    } finally {
+      setSharingPdfWa(false);
+    }
+  };
+
   const handlePrintPdf = () => {
     window.print();
     onShowToast(`Opened Print / Save PDF dialog for ${draft.invoiceNumber}.`);
   };
-
-  const handleDownloadStandaloneHtml = () => {
-    const logoUrl = `${window.location.origin}${OFFICIAL_LOGO_URL}`;
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<title>${draft.invoiceNumber} - Safar India Cabs Official Bill</title>
-<style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #0f172a; padding: 32px; max-width: 840px; margin: 0 auto; background: #fff; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 22px; }
-  .brand { display: flex; align-items: center; gap: 16px; }
-  .brand img { width: 76px; height: 76px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 10px; padding: 4px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 22px; font-size: 13px; line-height: 1.55; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 13px; }
-  th, td { border-bottom: 1px solid #e2e8f0; padding: 10px 8px; text-align: left; }
-  th { background: #f8fafc; font-weight: 700; }
-  .num { text-align: right; font-family: monospace; }
-  .total-row td { font-weight: 700; font-size: 15px; background: #0f172a; color: #fff; }
-  .footer { display: flex; justify-content: space-between; align-items: flex-end; padding-top: 18px; border-top: 1px dashed #94a3b8; margin-top: 24px; }
-  .stamp { border: 2px double #1e3a8a; color: #1e3a8a; border-radius: 999px; padding: 10px 18px; text-align: center; font-weight: 700; font-size: 11px; display: inline-block; transform: rotate(-6deg); }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div class="brand">
-      <img src="${logoUrl}" alt="SafarIndiaCabs Logo" />
-      <div>
-        <h1 style="margin:0;font-size:22px;">SafarIndiaCabs · A1 Cab Services • N. India</h1>
-        <p style="margin:3px 0 0;font-size:12px;color:#475569;">Your Journey, Our Priority · safarindiacabs.com</p>
-        <p style="margin:4px 0 0;font-size:12px;font-family:monospace;font-weight:700;">GSTIN: ${OFFICIAL_GSTIN} · SAC Code: 996412</p>
-      </div>
-    </div>
-    <div style="text-align:right;">
-      <div style="font-size:11px;font-weight:700;color:#475569;">${
-        draft.includeGst ? 'TAX INVOICE (ORIGINAL)' : 'OFFICIAL TRIP RECEIPT'
-      }</div>
-      <div style="font-size:17px;font-weight:700;font-family:monospace;margin-top:4px;">${
-        draft.invoiceNumber
-      }</div>
-      <div style="font-size:12px;color:#475569;">Booking ID: ${
-        draft.bookingId
-      } · Date: ${draft.invoiceDate}</div>
-    </div>
-  </div>
-
-  <div class="grid">
-    <div>
-      <strong>Billed To Customer / Corporate:</strong><br/>
-      ${draft.customerName}${
-      draft.billingCompanyName ? ` (${draft.billingCompanyName})` : ''
-    }<br/>
-      Phone: ${draft.customerPhone}<br/>
-      Email: ${draft.customerEmail}<br/>
-      Customer GSTIN: ${draft.customerGstin || 'Unregistered / B2C'}
-    </div>
-    <div>
-      <strong>Journey & Vehicle Particulars:</strong><br/>
-      Route: ${draft.pickupCity} → ${draft.dropCity} (${draft.tripType})<br/>
-      Pickup: ${draft.pickupDate} at ${draft.pickupTime}<br/>
-      Cab: ${draft.vehicleCategory} (${draft.vehicleModel}) · Plate: ${
-      draft.vehicleNumber
-    }<br/>
-      Chauffeur: ${draft.driverName} (${draft.driverPhone})
-    </div>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Service Description (SAC 996412)</th>
-        <th>Calculation / Basis</th>
-        <th class="num">Amount (INR)</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Base Trip Distance Fare (${draft.vehicleCategory})</td>
-        <td>${draft.distanceKm} KM × ₹${draft.perKmRate}/KM (${
-      draft.tripDays
-    } Day)</td>
-        <td class="num">${formatINR(draft.baseFare)}</td>
-      </tr>
-      <tr>
-        <td>Chauffeur Daily Allowance (DA / Bata)</td>
-        <td>${draft.tripDays} Day(s)</td>
-        <td class="num">${formatINR(draft.driverAllowance)}</td>
-      </tr>
-      <tr>
-        <td>State Border Permit & Toll Charges</td>
-        <td>Inter-State Allocation</td>
-        <td class="num">${formatINR(draft.stateTax)}</td>
-      </tr>
-      <tr>
-        <td>Night Driving Allowance</td>
-        <td>Night Window</td>
-        <td class="num">${formatINR(draft.nightCharges)}</td>
-      </tr>
-      ${
-        draft.parkingTollExtra > 0
-          ? `<tr>
-        <td>Airport Parking / Extra Toll / Waiting</td>
-        <td>Actuals</td>
-        <td class="num">${formatINR(draft.parkingTollExtra)}</td>
-      </tr>`
-          : ''
-      }
-      ${
-        draft.marketDiscount > 0
-          ? `<tr>
-        <td>Less: SafarIndiaCabs Promotional Market Discount</td>
-        <td>Rebate</td>
-        <td class="num">- ${formatINR(draft.marketDiscount)}</td>
-      </tr>`
-          : ''
-      }
-      <tr>
-        <td><strong>Net Taxable Fare</strong></td>
-        <td>Before Tax</td>
-        <td class="num"><strong>${formatINR(taxableAmount)}</strong></td>
-      </tr>
-      ${
-        draft.includeGst
-          ? `<tr>
-        <td>GST @ ${draft.gstPercentage}% (CGST: ${formatINR(
-              cgst
-            )} + SGST: ${formatINR(sgst)})</td>
-        <td>SAC 996412</td>
-        <td class="num">${formatINR(gstAmount)}</td>
-      </tr>`
-          : ''
-      }
-      <tr class="total-row">
-        <td>Grand Total Bill Amount</td>
-        <td>Advance Paid: ${formatINR(
-          draft.advancePaid
-        )} · Balance: ${formatINR(balanceDue)}</td>
-        <td class="num">${formatINR(grandTotal)}</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <div class="footer">
-    <div style="font-size:12px;color:#475569;max-width:440px;">
-      <strong>Notes & Declaration:</strong><br/>
-      ${draft.notes}<br/>
-      Official Company GSTIN: <strong>${OFFICIAL_GSTIN}</strong>
-    </div>
-    <div style="text-align:right;">
-      ${
-        draft.includeMohurStamp
-          ? `<div class="stamp">SAFAR INDIA CABS • N. INDIA<br/>GSTIN: ${OFFICIAL_GSTIN}<br/>OFFICIAL MOHUR STAMP</div><br/>`
-          : ''
-      }
-      ${
-        draft.includeDigitalSign
-          ? `<div style="font-family:cursive;font-size:18px;color:#1e3a8a;margin-top:6px;">${draft.authorizedSignatoryName}</div>`
-          : ''
-      }
-      <div style="font-size:11px;font-weight:700;color:#0f172a;margin-top:2px;">Authorized Signatory · SafarIndiaCabs</div>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute(
-      'download',
-      `${draft.invoiceNumber}_${draft.bookingId}_MohurBill.html`
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    onShowToast(
-      `Downloaded branded Mohur & Sign bill (${draft.invoiceNumber}).`
-    );
-  };
-
-  const cleanWaPhone = draft.customerPhone.replace(/\D/g, '');
-  const waNumber =
-    cleanWaPhone.length === 10 ? `91${cleanWaPhone}` : cleanWaPhone || '919811427650';
-  const waBillSummary = `*Safar India Cabs (A1 Cab Services • N. India)*
-*Official GST Tax Invoice / Receipt*
-Invoice No: *${draft.invoiceNumber}*
-Booking ID: *#${draft.bookingId}*
-GSTIN: *${OFFICIAL_GSTIN}*
-
-Customer: *${draft.customerName}*
-Route: ${draft.pickupCity} → ${draft.dropCity}
-Date: ${draft.pickupDate}
-Vehicle: ${draft.vehicleCategory} (${draft.vehicleNumber})
-
-*Fare Breakdown:*
-• Base Fare (${draft.distanceKm} KM): ${formatINR(draft.baseFare)}
-• Driver Allowance: ${formatINR(draft.driverAllowance)}
-• State Tax / Toll: ${formatINR(draft.stateTax)}
-${draft.marketDiscount > 0 ? `• Market Discount: -${formatINR(draft.marketDiscount)}\n` : ''}${
-    draft.includeGst ? `• 5% GST (SAC 996412): ${formatINR(gstAmount)}\n` : ''
-  }• *Grand Total: ${formatINR(grandTotal)}*
-• Advance Paid: ${formatINR(draft.advancePaid)}
-• *Balance Payable: ${formatINR(balanceDue)}*
-
-Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
 
   return (
     <section className="space-y-6">
       {/* Header Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-            Bill Generator (Official Mohur Stamp & Digital Signature)
+          <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 font-display">
+            Bill Generator (Rectangular Stamp & Digitally Signed PDF)
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Create instant branded corporate & individual GST bills (GSTIN: {OFFICIAL_GSTIN}) with official SafarIndiaCabs logo, circular Mohur, and signatory stamp
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+            Official {OFFICIAL_COMPANY_NAME} Tax Invoices · Proprietor:{' '}
+            <strong>{OFFICIAL_PROPRIETOR}</strong> · GSTIN:{' '}
+            <strong>{OFFICIAL_GSTIN}</strong> · SAC:{' '}
+            <strong>{OFFICIAL_SAC_CODE}</strong>
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleDownloadStandaloneHtml}
-            className="px-3.5 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+            disabled={generatingPdf}
+            onClick={handleDownloadRealPdf}
+            className="px-3.5 py-2.5 text-xs font-extrabold text-slate-900 dark:text-slate-100 bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 hover:border-amber-500 rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Download Branded Bill</span>
+            <Download className="w-4 h-4 text-amber-500" />
+            <span>
+              {generatingPdf ? 'Generating PDF...' : 'Download Real .PDF Bill'}
+            </span>
           </button>
 
-          <a
-            href={`https://wa.me/${waNumber}?text=${encodeURIComponent(
-              waBillSummary
-            )}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+          <button
+            type="button"
+            disabled={sharingPdfWa}
+            onClick={handleSharePdfOnWhatsApp}
+            className="px-4 py-2.5 text-xs font-extrabold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
           >
-            <Send className="w-3.5 h-3.5" />
-            <span>WhatsApp Bill to Customer</span>
-          </a>
+            <Send className="w-4 h-4" />
+            <span>
+              {sharingPdfWa
+                ? 'Preparing PDF File...'
+                : 'Share PDF Bill on WhatsApp'}
+            </span>
+          </button>
 
           <button
             type="button"
             onClick={handlePrintPdf}
-            className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2.5 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
           >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print / Save Branded PDF</span>
+            <Printer className="w-4 h-4" />
+            <span>Print / Save PDF</span>
           </button>
         </div>
       </div>
@@ -423,12 +234,12 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
       {/* Main Split: Left Editor Controls (5 cols) | Right Live Branded Invoice Preview (7 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Editor Panel */}
-        <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-5">
+        <div className="lg:col-span-5 bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-5">
           {/* Load from Existing Booking */}
           <div className="space-y-1.5 pb-4 border-b border-slate-200 dark:border-slate-800">
             <label
               htmlFor="select-booking-prefill"
-              className="block text-xs font-semibold text-slate-900 dark:text-slate-100"
+              className="block text-xs font-extrabold text-slate-900 dark:text-slate-100"
             >
               Load Details from Existing Booking (or Edit Custom Below)
             </label>
@@ -441,13 +252,13 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                     (b) => b.bookingId === e.target.value
                   );
                   if (found) {
-                    setDraft(bookingToBillDraft(found));
+                    setDraft(bookingToStandardBillDraft(found));
                     onShowToast(
                       `Loaded bill details from booking ${found.bookingId} (${found.customerName}).`
                     );
                   }
                 }}
-                className="flex-1 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                className="flex-1 px-3 py-2 text-xs font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
               >
                 {bookings.map((b) => (
                   <option key={b.bookingId} value={b.bookingId}>
@@ -464,9 +275,10 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                     ...DEFAULT_CUSTOM_BILL,
                     bookingId: `SIC${randomNum}`,
                     invoiceNumber: `INV-SIC-2026-${randomNum}`,
+                    digitalSignatureTimestamp: getFormattedDigitalSignTimestamp(),
                   });
                 }}
-                className="px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg inline-flex items-center gap-1 cursor-pointer shrink-0"
+                className="px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl inline-flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>Blank Bill</span>
@@ -474,10 +286,10 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
             </div>
           </div>
 
-          {/* Mohur & Sign Toggles */}
+          {/* Rectangular Stamp & Digital Sign Controls */}
           <div className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-800">
-            <div className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-              Mohur Stamp, Signature & Branding Controls
+            <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
+              Rectangular Stamp & &quot;Digitally Signed&quot; Format Controls
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -485,14 +297,14 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onClick={() =>
                   updateField('includeMohurStamp', !draft.includeMohurStamp)
                 }
-                className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
+                className={`p-2.5 rounded-xl border-2 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
                   draft.includeMohurStamp
-                    ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-300 dark:border-blue-800 text-blue-900 dark:text-blue-200'
+                    ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-400 dark:border-blue-700 text-blue-900 dark:text-blue-200'
                     : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
                 }`}
               >
                 <Stamp className="w-4 h-4 shrink-0" />
-                <span>Circular Mohur: {draft.includeMohurStamp ? 'ON' : 'OFF'}</span>
+                <span>Rect. Stamp: {draft.includeMohurStamp ? 'ON' : 'OFF'}</span>
               </button>
 
               <button
@@ -500,22 +312,24 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onClick={() =>
                   updateField('includeDigitalSign', !draft.includeDigitalSign)
                 }
-                className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
+                className={`p-2.5 rounded-xl border-2 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
                   draft.includeDigitalSign
-                    ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                    ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200'
                     : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
                 }`}
               >
                 <PenTool className="w-4 h-4 shrink-0" />
-                <span>Digital Sign: {draft.includeDigitalSign ? 'ON' : 'OFF'}</span>
+                <span>
+                  Digitally Signed: {draft.includeDigitalSign ? 'ON' : 'OFF'}
+                </span>
               </button>
 
               <button
                 type="button"
                 onClick={() => updateField('includeGst', !draft.includeGst)}
-                className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
+                className={`p-2.5 rounded-xl border-2 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
                   draft.includeGst
-                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-400 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200'
                     : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
                 }`}
               >
@@ -526,7 +340,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
               <button
                 type="button"
                 onClick={() => setShowBannerInBill((b) => !b)}
-                className={`p-2.5 rounded-lg border text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors ${
+                className={`p-2.5 rounded-xl border-2 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
                   showBannerInBill
                     ? 'bg-slate-900 text-white dark:bg-amber-500 dark:text-slate-950 border-slate-900'
                     : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
@@ -541,51 +355,51 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
           {/* Customer & Invoice Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Invoice Number
               </label>
               <input
                 type="text"
                 value={draft.invoiceNumber}
                 onChange={(e) => updateField('invoiceNumber', e.target.value)}
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Invoice Date
               </label>
               <input
                 type="date"
                 value={draft.invoiceDate}
                 onChange={(e) => updateField('invoiceDate', e.target.value)}
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Customer / Traveller Name
               </label>
               <input
                 type="text"
                 value={draft.customerName}
                 onChange={(e) => updateField('customerName', e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Customer Mobile
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Customer WhatsApp Mobile
               </label>
               <input
                 type="text"
                 value={draft.customerPhone}
                 onChange={(e) => updateField('customerPhone', e.target.value)}
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Corporate / Company Name (Optional)
               </label>
               <input
@@ -595,11 +409,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                   updateField('billingCompanyName', e.target.value)
                 }
                 placeholder="e.g. TechSpire India Pvt Ltd"
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Customer GSTIN (Optional)
               </label>
               <input
@@ -609,7 +423,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                   updateField('customerGstin', e.target.value.toUpperCase())
                 }
                 placeholder="B2C / Unregistered"
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
           </div>
@@ -617,29 +431,29 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
           {/* Route & Chauffeur Fields */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Pickup City
               </label>
               <input
                 type="text"
                 value={draft.pickupCity}
                 onChange={(e) => updateField('pickupCity', e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Drop City
               </label>
               <input
                 type="text"
                 value={draft.dropCity}
                 onChange={(e) => updateField('dropCity', e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Trip Category
               </label>
               <select
@@ -647,7 +461,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('tripType', e.target.value as TripType)
                 }
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               >
                 <option value="Round Trip Outstation">
                   Round Trip Outstation
@@ -658,7 +472,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
               </select>
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Cab Category
               </label>
               <select
@@ -669,7 +483,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                     e.target.value as VehicleCategory
                   )
                 }
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               >
                 <option value="Hatchback">Hatchback</option>
                 <option value="Sedan">Sedan</option>
@@ -678,7 +492,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
               </select>
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Vehicle Number
               </label>
               <input
@@ -687,18 +501,18 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('vehicleNumber', e.target.value.toUpperCase())
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Driver Name
               </label>
               <input
                 type="text"
                 value={draft.driverName}
                 onChange={(e) => updateField('driverName', e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
           </div>
@@ -706,7 +520,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
           {/* Pricing & Charges Fields */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Distance (KM)
               </label>
               <input
@@ -715,11 +529,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('distanceKm', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Rate / KM (₹)
               </label>
               <input
@@ -728,11 +542,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('perKmRate', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Base Fare (₹)
               </label>
               <input
@@ -741,11 +555,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('baseFare', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Driver Bata (₹)
               </label>
               <input
@@ -754,11 +568,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('driverAllowance', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 State Tax/Toll (₹)
               </label>
               <input
@@ -767,11 +581,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('stateTax', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Parking/Extra (₹)
               </label>
               <input
@@ -780,11 +594,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('parkingTollExtra', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Discount (₹)
               </label>
               <input
@@ -793,11 +607,11 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('marketDiscount', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Advance Paid (₹)
               </label>
               <input
@@ -806,12 +620,12 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('advancePaid', Number(e.target.value))
                 }
-                className="w-full px-2.5 py-1.5 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Signatory Name
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Proprietor / Signatory
               </label>
               <input
                 type="text"
@@ -819,14 +633,14 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                 onChange={(e) =>
                   updateField('authorizedSignatoryName', e.target.value)
                 }
-                className="w-full px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-2.5 py-1.5 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
           </div>
         </div>
 
         {/* Right Live Branded Invoice Paper Preview */}
-        <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden text-slate-900">
+        <div className="lg:col-span-7 bg-white border-2 border-slate-300 rounded-2xl shadow-md overflow-hidden text-slate-900">
           {showBannerInBill && (
             <div className="w-full h-36 overflow-hidden border-b border-slate-200">
               <img
@@ -838,7 +652,7 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
           )}
 
           <div className="p-6 sm:p-8 space-y-6">
-            {/* Invoice Top Header with Uploaded Logo */}
+            {/* Invoice Top Header with Official Company Details */}
             <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b-2 border-slate-900">
               <div className="flex items-start gap-4">
                 <img
@@ -846,33 +660,35 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                   alt="SafarIndiaCabs Official Logo"
                   className="w-20 h-20 object-contain rounded-xl border border-slate-200 p-1 bg-white shrink-0"
                 />
-                <div>
-                  <div className="text-xl font-bold text-slate-900 font-display tracking-tight">
-                    SafarIndiaCabs
+                <div className="space-y-0.5">
+                  <div className="text-xl font-extrabold text-slate-900 font-display tracking-tight">
+                    {OFFICIAL_COMPANY_NAME}
                   </div>
-                  <div className="text-xs font-semibold text-amber-700 tracking-wide">
-                    A1 CAB SERVICES • N. INDIA — Your Journey, Our Priority
+                  <div className="text-xs font-extrabold text-amber-700">
+                    Proprietor / Signatory: {OFFICIAL_PROPRIETOR} · GSTIN:{' '}
+                    {OFFICIAL_GSTIN} · SAC: {OFFICIAL_SAC_CODE}
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    Web: safarindiacabs.com · Support: +91 98114 27650
+                  <div className="text-[11px] font-semibold text-slate-700">
+                    Regd. Address: {OFFICIAL_REGISTERED_ADDRESS}
                   </div>
-                  <div className="text-xs font-mono font-bold text-slate-900 mt-1">
-                    Official GSTIN: {OFFICIAL_GSTIN} · SAC: 996412
+                  <div className="text-[11px] font-mono text-slate-600">
+                    Email: {OFFICIAL_EMAIL} · Helpline / WhatsApp:{' '}
+                    {OFFICIAL_HELPLINE}
                   </div>
                 </div>
               </div>
 
-              <div className="sm:text-right">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              <div className="sm:text-right shrink-0">
+                <div className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
                   {draft.includeGst
-                    ? 'GST TAX INVOICE'
+                    ? 'TAX INVOICE'
                     : 'OFFICIAL TRIP RECEIPT'}
                 </div>
-                <div className="text-lg font-bold font-mono text-slate-900 mt-0.5">
+                <div className="text-lg font-extrabold font-mono text-slate-900 mt-0.5">
                   {draft.invoiceNumber}
                 </div>
-                <div className="text-xs font-mono text-slate-600 mt-0.5">
-                  Booking Ref: #{draft.bookingId}
+                <div className="text-xs font-mono font-bold text-slate-700 mt-0.5">
+                  Booking ID: #{draft.bookingId}
                 </div>
                 <div className="text-xs font-mono text-slate-500">
                   Date: {draft.invoiceDate}
@@ -881,42 +697,42 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
             </div>
 
             {/* Customer & Journey Details Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs">
-              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                <div className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
                   Billed To (Traveller / Corporate)
                 </div>
-                <div className="text-sm font-bold text-slate-900">
+                <div className="text-sm font-extrabold text-slate-900">
                   {draft.customerName}
                 </div>
                 {draft.billingCompanyName && (
-                  <div className="font-semibold text-slate-700">
+                  <div className="font-bold text-slate-700">
                     {draft.billingCompanyName}
                   </div>
                 )}
-                <div className="font-mono text-slate-600">
-                  Phone: {draft.customerPhone}
+                <div className="font-mono font-semibold text-slate-700">
+                  Mobile: {draft.customerPhone}
                 </div>
                 {draft.customerEmail && (
                   <div className="text-slate-600">{draft.customerEmail}</div>
                 )}
-                <div className="font-mono text-slate-800 pt-1">
+                <div className="font-mono text-slate-900 pt-1">
                   Customer GSTIN:{' '}
                   <strong>{draft.customerGstin || 'B2C / Unregistered'}</strong>
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                <div className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">
-                  Trip & Chauffeur Particulars
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
+                  Journey & Vehicle Particulars
                 </div>
-                <div className="text-sm font-bold text-slate-900">
+                <div className="text-sm font-extrabold text-slate-900">
                   {draft.pickupCity} → {draft.dropCity}
                 </div>
-                <div className="text-slate-700">
+                <div className="font-semibold text-slate-700">
                   {draft.tripType} · {draft.pickupDate} ({draft.pickupTime})
                 </div>
-                <div className="font-mono text-slate-700">
+                <div className="font-mono font-bold text-slate-800">
                   Cab: {draft.vehicleCategory} ({draft.vehicleNumber})
                 </div>
                 <div className="font-mono text-slate-700">
@@ -926,31 +742,31 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
             </div>
 
             {/* Fare Table */}
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-700">
-                    <th className="py-2.5 px-4 text-left font-bold">
-                      Description of Cab Service (SAC 996412)
+                  <tr className="bg-slate-900 text-white">
+                    <th className="py-2.5 px-4 text-left font-extrabold">
+                      Description of Cab Service (SAC {OFFICIAL_SAC_CODE})
                     </th>
-                    <th className="py-2.5 px-4 text-left font-bold">
+                    <th className="py-2.5 px-4 text-left font-extrabold">
                       Rate / Basis
                     </th>
-                    <th className="py-2.5 px-4 text-right font-bold">
+                    <th className="py-2.5 px-4 text-right font-extrabold">
                       Amount (INR)
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 text-slate-800">
                   <tr>
-                    <td className="py-2.5 px-4 font-medium">
+                    <td className="py-2.5 px-4 font-bold">
                       Base Trip Fare ({draft.vehicleCategory})
                     </td>
                     <td className="py-2.5 px-4 font-mono">
                       {draft.distanceKm} KM × ₹{draft.perKmRate}/KM (
                       {draft.tripDays}d)
                     </td>
-                    <td className="py-2.5 px-4 text-right font-mono font-semibold">
+                    <td className="py-2.5 px-4 text-right font-mono font-bold">
                       {formatINR(draft.baseFare)}
                     </td>
                   </tr>
@@ -995,17 +811,17 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                     </tr>
                   )}
                   {draft.marketDiscount > 0 && (
-                    <tr className="bg-emerald-50/70 text-emerald-900">
-                      <td className="py-2.5 px-4 font-medium">
+                    <tr className="bg-emerald-50/80 text-emerald-900">
+                      <td className="py-2.5 px-4 font-bold">
                         Less: SafarIndiaCabs Promotional Market Discount
                       </td>
                       <td className="py-2.5 px-4">Instant Rebate</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-semibold">
+                      <td className="py-2.5 px-4 text-right font-mono font-bold">
                         - {formatINR(draft.marketDiscount)}
                       </td>
                     </tr>
                   )}
-                  <tr className="bg-slate-50 font-semibold">
+                  <tr className="bg-slate-50 font-bold">
                     <td className="py-2.5 px-4">Net Taxable Value</td>
                     <td className="py-2.5 px-4 font-mono">Sub-Total</td>
                     <td className="py-2.5 px-4 text-right font-mono">
@@ -1018,169 +834,87 @@ Authorized by: ${draft.authorizedSignatoryName} (SafarIndiaCabs Mohur & Sign)`;
                         GST @ {draft.gstPercentage}% (CGST: {formatINR(cgst)} +
                         SGST: {formatINR(sgst)})
                       </td>
-                      <td className="py-2.5 px-4 font-mono">SAC 996412</td>
+                      <td className="py-2.5 px-4 font-mono">
+                        SAC {OFFICIAL_SAC_CODE}
+                      </td>
                       <td className="py-2.5 px-4 text-right font-mono">
                         {formatINR(gstAmount)}
                       </td>
                     </tr>
                   )}
-                  <tr className="bg-slate-900 text-white font-bold text-sm">
-                    <td className="py-3 px-4">Grand Total Bill Amount</td>
-                    <td className="py-3 px-4 text-xs font-normal text-slate-300 font-mono">
+                  <tr className="bg-slate-900 text-white font-extrabold text-sm">
+                    <td className="py-3 px-4">TOTAL</td>
+                    <td className="py-3 px-4 text-xs font-semibold text-amber-300 font-mono">
                       Adv: {formatINR(draft.advancePaid)} · Bal:{' '}
                       {formatINR(balanceDue)}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono text-amber-400">
-                      {formatINR(grandTotal)}
+                    <td className="py-3 px-4 text-right font-mono text-amber-400 text-base">
+                      INR {Math.round(grandTotal).toLocaleString('en-IN')}.00
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
-            {/* Mohur Stamp & Signature Footer */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6 pt-4 border-t border-dashed border-slate-300">
-              <div className="space-y-1.5 text-xs text-slate-600 max-w-sm">
-                <div className="font-semibold text-slate-900">
-                  Terms & Settlement Summary:
+            {/* Footer: Left Company Details & Right Rectangular Stamp + Digitally Signed Block */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6 pt-4 border-t-2 border-slate-200">
+              <div className="space-y-1 text-xs text-slate-700 max-w-sm">
+                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
+                  Official Company & Registered Office Details:
                 </div>
-                <p className="text-[11px] leading-relaxed">{draft.notes}</p>
-                <div className="font-mono text-[11px] font-bold text-slate-900">
-                  GSTIN: {OFFICIAL_GSTIN} · PAN: DQHPA3025F
+                <div className="font-bold text-slate-900">
+                  {OFFICIAL_COMPANY_NAME} (Proprietor: {OFFICIAL_PROPRIETOR})
+                </div>
+                <div className="font-mono text-[11px] font-bold text-slate-800">
+                  GSTIN: {OFFICIAL_GSTIN} · SAC Code: {OFFICIAL_SAC_CODE}
+                </div>
+                <div className="text-[11px] leading-snug text-slate-700">
+                  <strong>Address:</strong> {OFFICIAL_REGISTERED_ADDRESS}
+                </div>
+                <div className="text-[11px] font-mono text-slate-600">
+                  Email: {OFFICIAL_EMAIL} · Helpline: {OFFICIAL_HELPLINE}
+                </div>
+                <div className="text-[11px] font-mono text-slate-500">
+                  Portal: {OFFICIAL_ADMIN_PORTAL_URL}
                 </div>
               </div>
 
-              <div className="flex items-center gap-5 self-end sm:self-auto">
+              {/* Rectangular Stamp & Rectangular "Digitally signed by" Block */}
+              <div className="flex flex-col items-end gap-3 self-end sm:self-auto w-full sm:w-auto">
                 {draft.includeMohurStamp && (
-                  <div
-                    className="relative w-28 h-28 flex items-center justify-center select-none"
-                    title="Official Safar India Cabs Circular Mohur"
-                  >
-                    <svg
-                      viewBox="0 0 120 120"
-                      className="w-28 h-28 text-blue-900/90 -rotate-12"
-                    >
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="55"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                      />
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="50"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1"
-                        strokeDasharray="3 2"
-                      />
-                      <circle
-                        cx="60"
-                        cy="60"
-                        r="35"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                      <path
-                        id="mohurArcTop"
-                        d="M 18,60 A 42,42 0 1,1 102,60"
-                        fill="none"
-                      />
-                      <path
-                        id="mohurArcBottom"
-                        d="M 102,60 A 42,42 0 1,1 18,60"
-                        fill="none"
-                      />
-                      <text
-                        fontSize="7.3"
-                        fontWeight="800"
-                        fill="currentColor"
-                        letterSpacing="1.1"
-                      >
-                        <textPath
-                          href="#mohurArcTop"
-                          startOffset="50%"
-                          textAnchor="middle"
-                        >
-                          SAFAR INDIA CABS • N. INDIA
-                        </textPath>
-                      </text>
-                      <text
-                        fontSize="6.4"
-                        fontWeight="700"
-                        fill="currentColor"
-                        letterSpacing="0.7"
-                      >
-                        <textPath
-                          href="#mohurArcBottom"
-                          startOffset="50%"
-                          textAnchor="middle"
-                        >
-                          GSTIN: {OFFICIAL_GSTIN}
-                        </textPath>
-                      </text>
-                      <text
-                        x="60"
-                        y="55"
-                        textAnchor="middle"
-                        fontSize="7.5"
-                        fontWeight="800"
-                        fill="currentColor"
-                      >
-                        A1 CAB SERVICES
-                      </text>
-                      <text
-                        x="60"
-                        y="65"
-                        textAnchor="middle"
-                        fontSize="6.8"
-                        fontWeight="700"
-                        fill="currentColor"
-                      >
-                        VERIFIED MOHUR
-                      </text>
-                    </svg>
+                  <div className="border-2 border-blue-900 px-3.5 py-2 rounded-xs bg-blue-50/40 text-blue-950 text-center w-full sm:w-72">
+                    <div className="text-xs font-extrabold tracking-wider uppercase">
+                      FOR {OFFICIAL_LEGAL_NAME}
+                    </div>
+                    <div className="text-[10px] font-mono font-bold text-blue-900 mt-0.5">
+                      GSTIN: {OFFICIAL_GSTIN} • NORTH DELHI 110084
+                    </div>
+                    <div className="text-[11px] font-extrabold text-blue-950 mt-1 border-t border-blue-900/30 pt-0.5 uppercase">
+                      PROPRIETOR: {draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}
+                    </div>
                   </div>
                 )}
 
-                <div className="text-right">
-                  {draft.includeDigitalSign && (
-                    <div className="mb-1">
-                      <svg
-                        viewBox="0 0 160 46"
-                        className="w-36 h-11 text-blue-950 ml-auto"
-                      >
-                        <path
-                          d="M12,34 C28,10 38,38 56,18 C68,8 78,32 98,16 C114,6 126,30 150,12"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.3"
-                          strokeLinecap="round"
-                        />
-                        <path
-                          d="M22,40 L142,36"
-                          fill="none"
-                          stroke="#f59e0b"
-                          strokeWidth="1.6"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                      <div className="text-xs font-bold text-blue-950">
-                        {draft.authorizedSignatoryName}
-                      </div>
+                {draft.includeDigitalSign && (
+                  <div className="border border-slate-400 bg-white px-4 py-3 text-left text-slate-900 w-full sm:w-72 shadow-2xs">
+                    <div className="text-[13px] leading-snug font-sans text-slate-900">
+                      Digitally signed by {OFFICIAL_LEGAL_NAME}
                     </div>
-                  )}
-                  <div className="text-xs font-bold text-slate-900">
-                    Authorized Signatory
+                    <div className="text-[12px] leading-snug font-sans font-semibold text-slate-800">
+                      PROPRIETOR:{' '}
+                      {(
+                        draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR
+                      ).toUpperCase()}{' '}
+                      ({OFFICIAL_GSTIN})
+                    </div>
+                    <div className="text-[12px] leading-snug font-sans text-slate-900 mt-0.5">
+                      Date: {digitalSignTimestamp}
+                    </div>
+                    <div className="text-[12px] leading-snug font-sans text-slate-900">
+                      Location: IN
+                    </div>
                   </div>
-                  <div className="text-[11px] font-mono text-slate-500">
-                    For SafarIndiaCabs ({OFFICIAL_GSTIN})
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>

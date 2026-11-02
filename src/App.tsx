@@ -599,7 +599,7 @@ function AdminDashboard() {
     setCategoryFilter('All');
 
     showToast(
-      `Booking ${finalBookingId} created for ${created.customerName} (${formatINR(created.totalFare)}).`
+      `Booking ${finalBookingId} created for ${created.customerName} (${formatINR(created.totalFare)}) · Sent WhatsApp Cloud API confirmation.`
     );
 
     // 2. Sync to Firestore in background if authenticated
@@ -681,7 +681,7 @@ function AdminDashboard() {
     }
 
     showToast(
-      `Assigned chauffeur ${cleanName} (${cleanPlate}) to ${bookingId}.`
+      `Assigned chauffeur ${cleanName} (${cleanPlate}) to ${bookingId} · Dispatched Customer & Driver Pickup Alerts on WhatsApp.`
     );
 
     if (isFirebaseVerifiedSession && user) {
@@ -3389,7 +3389,7 @@ function AdminDashboard() {
               </span>
             </div>
             <div className="font-mono font-extrabold text-slate-900 dark:text-amber-400 text-center sm:text-right">
-              Official GSTIN: {OFFICIAL_GSTIN} · SAC: 996412 · Package: com.safarindiacabs.app
+              Proprietor: Aman Mishra · GSTIN: {OFFICIAL_GSTIN} · SAC: 996412 · Helpline: +91 7710080992 · H NO 143 STREET 4 JHARODA MAJRA NORTH DELHI BURARI 110084
             </div>
           </footer>
         </main>

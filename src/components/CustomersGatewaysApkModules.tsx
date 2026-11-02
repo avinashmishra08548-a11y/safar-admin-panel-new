@@ -6,9 +6,19 @@ import {
   DEFAULT_GATEWAY_CONFIG,
   DEFAULT_APP_RELEASE_INFO,
   formatINR,
+  OFFICIAL_COMPANY_NAME,
   OFFICIAL_GSTIN,
+  OFFICIAL_SAC_CODE,
+  OFFICIAL_PROPRIETOR,
+  OFFICIAL_EMAIL,
+  OFFICIAL_HELPLINE,
+  OFFICIAL_REGISTERED_ADDRESS,
+  OFFICIAL_ADMIN_PORTAL_URL,
   OFFICIAL_LOGO_URL,
   OFFICIAL_BANNER_URL,
+  OLA_MAPS_CONFIG,
+  WHATSAPP_CLOUD_CONFIG,
+  RAZORPAY_DEFAULT_CONFIG,
 } from '../types/safar';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
@@ -27,6 +37,8 @@ import {
   Copy,
   Database,
   Package,
+  MapPin,
+  Building2,
 } from 'lucide-react';
 
 /* ============================================================================
@@ -308,7 +320,7 @@ export const CustomersDirectoryModule: React.FC<CustomersDirectoryProps> = ({
                         className="px-2.5 py-1.5 bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 rounded-md font-semibold inline-flex items-center gap-1 cursor-pointer"
                       >
                         <FileText className="w-3.5 h-3.5" />
-                        <span>Mohur Bill</span>
+                        <span>PDF Bill</span>
                       </button>
                     </div>
                   </td>
@@ -334,14 +346,16 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
 }) => {
   const [config, setConfig] = useState<GatewayConfig>(() => {
     const saved = localStorage.getItem('safar_gateway_config');
-    return saved ? JSON.parse(saved) : DEFAULT_GATEWAY_CONFIG;
+    return saved
+      ? { ...DEFAULT_GATEWAY_CONFIG, ...JSON.parse(saved) }
+      : DEFAULT_GATEWAY_CONFIG;
   });
 
   const handleSaveGateways = (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('safar_gateway_config', JSON.stringify(config));
     onShowToast(
-      'Saved Payment Gateway (Razorpay), SMS (DLT), and WhatsApp Cloud API settings.'
+      'Saved Ola Maps API, Razorpay Payment Gateway, and Meta WhatsApp Cloud API configurations.'
     );
   };
 
@@ -349,47 +363,62 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
     <section className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
-            Payment Gateways, SMS (DLT) & WhatsApp Messaging APIs
+          <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 font-display">
+            Ola Maps, Razorpay Gateway & Meta WhatsApp Cloud APIs
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Configure Razorpay 20% advance collection, UPI intent, MSG91/Fast2SMS DLT templates, and WhatsApp dispatch webhooks for safarindiacabs.com
+            Live Production Credentials for {OFFICIAL_COMPANY_NAME} ({OFFICIAL_ADMIN_PORTAL_URL})
           </p>
         </div>
 
         <button
           type="button"
           onClick={handleSaveGateways}
-          className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 rounded-lg inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+          className="px-4 py-2.5 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
         >
           <Save className="w-3.5 h-3.5" />
-          <span>Save All Gateway Configurations</span>
+          <span>Save All API Configurations</span>
         </button>
       </div>
 
-      {/* Firebase Live Sync Card */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start gap-3.5">
-          <Database className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-          <div>
-            <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-              Firebase Cloud Firestore & Authentication Sync Bridge
+      {/* Official Company GST & Registered Office Card */}
+      <div className="bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex items-start gap-3">
+          <Building2 className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+              Official Company GST & Contact Details (Active in PDF Invoices)
             </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-              Project ID:{' '}
-              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">
-                {firebaseConfig.projectId}
-              </span>{' '}
-              · Auth Domain:{' '}
-              <span className="font-mono">{firebaseConfig.authDomain}</span> ·
-              Official GSTIN:{' '}
-              <span className="font-mono font-semibold">{OFFICIAL_GSTIN}</span>
-            </p>
+            <div>
+              <strong>Company Name:</strong> {OFFICIAL_COMPANY_NAME} ·{' '}
+              <strong>Proprietor / Signatory:</strong> {OFFICIAL_PROPRIETOR}
+            </div>
+            <div className="font-mono font-bold text-amber-700 dark:text-amber-400">
+              GSTIN: {OFFICIAL_GSTIN} · SAC Code: {OFFICIAL_SAC_CODE}
+            </div>
+            <div>
+              <strong>Registered Address:</strong> {OFFICIAL_REGISTERED_ADDRESS}
+            </div>
           </div>
         </div>
-        <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 shrink-0">
-          <CheckCircle2 className="w-4 h-4" />
-          <span>Real-Time Sync Active</span>
+
+        <div className="flex items-start gap-3">
+          <Database className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+              Official Contact & Firebase Cloud Sync
+            </div>
+            <div>
+              <strong>Official Email:</strong> {OFFICIAL_EMAIL}
+            </div>
+            <div>
+              <strong>Helpline / WhatsApp:</strong> {OFFICIAL_HELPLINE}
+            </div>
+            <div className="font-mono text-slate-600 dark:text-slate-400">
+              Firebase Project: <strong>{firebaseConfig.projectId}</strong> ·
+              Portal: {OFFICIAL_ADMIN_PORTAL_URL}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -397,53 +426,75 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
         onSubmit={handleSaveGateways}
         className="grid grid-cols-1 lg:grid-cols-3 gap-6"
       >
-        {/* Card 1: Razorpay & UPI Payment Gateway */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+        {/* Card 1: Ola Maps API */}
+        <div className="bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-amber-500" />
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
-                Razorpay & UPI Gateway
+              <MapPin className="w-4 h-4 text-emerald-600" />
+              <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 font-display">
+                1. Ola Maps API (Autocomplete & KM)
               </h2>
             </div>
-            <button
-              type="button"
-              onClick={() =>
-                setConfig((c) => ({ ...c, razorpayEnabled: !c.razorpayEnabled }))
-              }
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
-                config.razorpayEnabled
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-200 dark:bg-slate-800 text-slate-600'
-              }`}
-            >
-              {config.razorpayEnabled ? 'Active' : 'Disabled'}
-            </button>
+            <span className="px-2 py-0.5 text-[11px] font-extrabold bg-emerald-600 text-white rounded-md">
+              Active
+            </span>
           </div>
 
           <div className="space-y-3 text-xs">
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Environment Mode
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Ola Maps API Key
               </label>
-              <select
-                value={config.razorpayMode}
+              <input
+                type="text"
+                value={config.olaMapsApiKey}
                 onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    razorpayMode: e.target.value as 'Live' | 'Test',
-                  }))
+                  setConfig((c) => ({ ...c, olaMapsApiKey: e.target.value }))
                 }
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              >
-                <option value="Live">Live Production Mode</option>
-                <option value="Test">Test Sandbox Mode</option>
-              </select>
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
             </div>
 
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Razorpay Key ID
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Ola Maps Client ID
+              </label>
+              <input
+                type="text"
+                value={config.olaMapsClientId}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, olaMapsClientId: e.target.value }))
+                }
+                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[11px] space-y-1 text-slate-600 dark:text-slate-400">
+              <div>Autocomplete: {OLA_MAPS_CONFIG.autocompleteEndpoint}</div>
+              <div>Directions: {OLA_MAPS_CONFIG.directionsEndpoint}</div>
+              <div>Distance Matrix: {OLA_MAPS_CONFIG.distanceMatrixEndpoint}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Razorpay Payment Gateway */}
+        <div className="bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-amber-500" />
+              <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 font-display">
+                2. Razorpay 20% Advance Gateway
+              </h2>
+            </div>
+            <span className="px-2 py-0.5 text-[11px] font-extrabold bg-emerald-600 text-white rounded-md">
+              Active
+            </span>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <div>
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Razorpay Key ID (VITE_RAZORPAY_KEY_ID)
               </label>
               <input
                 type="text"
@@ -451,13 +502,13 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
                 onChange={(e) =>
                   setConfig((c) => ({ ...c, razorpayKeyId: e.target.value }))
                 }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
 
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Merchant Direct UPI ID (QR / Intent)
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Merchant Direct UPI ID
               </label>
               <input
                 type="text"
@@ -469,7 +520,12 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
               />
             </div>
 
-            <label className="flex items-center gap-2 pt-1 cursor-pointer">
+            <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[11px] space-y-1 text-slate-600 dark:text-slate-400">
+              <div>Create Order: {RAZORPAY_DEFAULT_CONFIG.createOrderEndpoint}</div>
+              <div>Verify Payment: {RAZORPAY_DEFAULT_CONFIG.verifyPaymentEndpoint}</div>
+            </div>
+
+            <label className="flex items-center gap-2 pt-1 cursor-pointer font-bold">
               <input
                 type="checkbox"
                 checked={config.autoSplitAdvance20Pct}
@@ -479,140 +535,64 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
                     autoSplitAdvance20Pct: e.target.checked,
                   }))
                 }
-                className="rounded border-slate-300"
+                className="rounded border-slate-300 accent-amber-500"
               />
               <span className="text-slate-700 dark:text-slate-300">
-                Enable 20% Advance + 80% Driver Collect Split
+                20% Advance Online + 80% Driver Collect Split
               </span>
             </label>
           </div>
         </div>
 
-        {/* Card 2: SMS Gateway (DLT India) */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-2">
-              <Smartphone className="w-4 h-4 text-amber-500" />
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
-                SMS Gateway (TRAI DLT)
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                setConfig((c) => ({ ...c, smsEnabled: !c.smsEnabled }))
-              }
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
-                config.smsEnabled
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-200 dark:bg-slate-800 text-slate-600'
-              }`}
-            >
-              {config.smsEnabled ? 'Active' : 'Disabled'}
-            </button>
-          </div>
-
-          <div className="space-y-3 text-xs">
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                SMS Provider
-              </label>
-              <select
-                value={config.smsGatewayProvider}
-                onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    smsGatewayProvider: e.target.value as 'MSG91' | 'Fast2SMS',
-                  }))
-                }
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              >
-                <option value="MSG91">MSG91 Enterprise DLT</option>
-                <option value="Fast2SMS">Fast2SMS DLT Route</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                6-Char DLT Sender Header ID
-              </label>
-              <input
-                type="text"
-                value={config.smsSenderId}
-                onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    smsSenderId: e.target.value.toUpperCase(),
-                  }))
-                }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                TRAI DLT Principal Entity ID
-              </label>
-              <input
-                type="text"
-                value={config.smsDltEntityId}
-                onChange={(e) =>
-                  setConfig((c) => ({ ...c, smsDltEntityId: e.target.value }))
-                }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Booking & OTP DLT Template ID
-              </label>
-              <input
-                type="text"
-                value={config.smsBookingTemplateId}
-                onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    smsBookingTemplateId: e.target.value,
-                  }))
-                }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Card 3: WhatsApp Business Dispatch API */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
+        {/* Card 3: Meta WhatsApp Cloud API */}
+        <div className="bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-emerald-600" />
-              <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
-                WhatsApp Dispatch API
+              <h2 className="text-sm font-extrabold text-slate-900 dark:text-slate-100 font-display">
+                3. Meta WhatsApp Cloud API
               </h2>
             </div>
-            <button
-              type="button"
-              onClick={() =>
-                setConfig((c) => ({
-                  ...c,
-                  whatsappApiEnabled: !c.whatsappApiEnabled,
-                }))
-              }
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer ${
-                config.whatsappApiEnabled
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-slate-200 dark:bg-slate-800 text-slate-600'
-              }`}
-            >
-              {config.whatsappApiEnabled ? 'Active' : 'Disabled'}
-            </button>
+            <span className="px-2 py-0.5 text-[11px] font-extrabold bg-emerald-600 text-white rounded-md">
+              Active
+            </span>
           </div>
 
           <div className="space-y-3 text-xs">
             <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                Registered Dispatch WhatsApp Number
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Phone Number ID (WHATSAPP_PHONE_NUMBER_ID)
+              </label>
+              <input
+                type="text"
+                value={config.whatsappPhoneNumberId}
+                onChange={(e) =>
+                  setConfig((c) => ({
+                    ...c,
+                    whatsappPhoneNumberId: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                WhatsApp Business Account ID (WHATSAPP_WABA_ID)
+              </label>
+              <input
+                type="text"
+                value={config.whatsappWabaId}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, whatsappWabaId: e.target.value }))
+                }
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                Official Admin WhatsApp Number
               </label>
               <input
                 type="text"
@@ -623,40 +603,13 @@ export const GatewaysAndApisModule: React.FC<GatewaysAndApisProps> = ({
                     whatsappBusinessPhone: e.target.value,
                   }))
                 }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
               />
             </div>
 
-            <div>
-              <label className="block text-slate-500 dark:text-slate-400 mb-1">
-                WhatsApp Business Account (WABA) ID
-              </label>
-              <input
-                type="text"
-                value={config.whatsappWabaId}
-                onChange={(e) =>
-                  setConfig((c) => ({ ...c, whatsappWabaId: e.target.value }))
-                }
-                className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg"
-              />
+            <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono text-[10px] break-all text-slate-600 dark:text-slate-400">
+              Endpoint: {WHATSAPP_CLOUD_CONFIG.endpoint}
             </div>
-
-            <label className="flex items-center gap-2 pt-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.autoWhatsappOnDriverAssign}
-                onChange={(e) =>
-                  setConfig((c) => ({
-                    ...c,
-                    autoWhatsappOnDriverAssign: e.target.checked,
-                  }))
-                }
-                className="rounded border-slate-300"
-              />
-              <span className="text-slate-700 dark:text-slate-300">
-                Prompt 1-Tap WhatsApp Alert when Driver is Allotted
-              </span>
-            </label>
           </div>
         </div>
       </form>
@@ -705,6 +658,8 @@ export const SecurityAndApkModule: React.FC<SecurityAndApkProps> = ({
             minSdk: releaseInfo.minSdk,
             targetSdk: releaseInfo.targetSdk,
             companyGstin: OFFICIAL_GSTIN,
+            proprietor: OFFICIAL_PROPRIETOR,
+            registeredAddress: OFFICIAL_REGISTERED_ADDRESS,
             firebaseProjectId: firebaseConfig.projectId,
             signingConfig: {
               keystoreAlias: releaseInfo.keystoreAlias,
@@ -726,8 +681,10 @@ export const SecurityAndApkModule: React.FC<SecurityAndApkProps> = ({
             versionName: releaseInfo.versionName,
             versionCode: releaseInfo.versionCode,
             companyGstin: OFFICIAL_GSTIN,
+            proprietor: OFFICIAL_PROPRIETOR,
+            helpline: OFFICIAL_HELPLINE,
             apiEndpoint: 'https://safarindiacabs.com',
-            adminEndpoint: 'https://admin.safarindiacabs.com',
+            adminEndpoint: OFFICIAL_ADMIN_PORTAL_URL,
             sha256Fingerprint: releaseInfo.sha256Fingerprint,
           },
           null,
@@ -741,26 +698,14 @@ export const SecurityAndApkModule: React.FC<SecurityAndApkProps> = ({
 Package Name   : ${releaseInfo.packageName}
 App Name       : ${releaseInfo.appName}
 Version        : ${releaseInfo.versionName} (versionCode: ${releaseInfo.versionCode})
+Proprietor     : ${OFFICIAL_PROPRIETOR}
 Official GSTIN : ${OFFICIAL_GSTIN}
+Address        : ${OFFICIAL_REGISTERED_ADDRESS}
 Keystore Alias : ${releaseInfo.keystoreAlias}
 SHA-1          : ${releaseInfo.sha1Fingerprint}
 SHA-256        : ${releaseInfo.sha256Fingerprint}
 Firebase App   : ${firebaseConfig.projectId}
-===================================================================
-assetlinks.json snippet for https://safarindiacabs.com/.well-known/assetlinks.json:
-[
-  {
-    "relation": ["delegate_permission/common.handle_all_urls"],
-    "target": {
-      "namespace": "android_app",
-      "package_name": "${releaseInfo.packageName}",
-      "sha256_cert_fingerprints": [
-        "${releaseInfo.sha256Fingerprint}"
-      ]
-    }
-  }
-]
-`,
+===================================================================`,
       },
     };
 
@@ -912,13 +857,12 @@ assetlinks.json snippet for https://safarindiacabs.com/.well-known/assetlinks.js
 
       {/* Brand Assets & Admin Security PIN Configuration */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Uploaded Brand Assets Preview */}
         <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
           <div className="text-sm font-bold text-slate-900 dark:text-slate-100 font-display">
             Official Brand Assets & Invoice Logo Repository
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Active across Login Screen, Sidebar, GST Tax Invoices, and the Bill Generator (Mohur & Sign) module
+            Active across Login Screen, Sidebar, GST Tax Invoices, and the Bill Generator module
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center pt-1">
@@ -932,7 +876,7 @@ assetlinks.json snippet for https://safarindiacabs.com/.well-known/assetlinks.js
                 Primary Invoice & App Logo
               </div>
               <div className="text-[11px] font-mono text-slate-500">
-                SafarIndiaCabs · A1 Cab Services
+                {OFFICIAL_COMPANY_NAME} · {OFFICIAL_GSTIN}
               </div>
             </div>
 
@@ -1060,7 +1004,7 @@ assetlinks.json snippet for https://safarindiacabs.com/.well-known/assetlinks.js
               className="px-4 py-2 text-xs font-semibold text-slate-950 bg-amber-500 hover:bg-amber-600 rounded-lg inline-flex items-center gap-1.5 cursor-pointer"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>Save Security & App Settings</span>
+              <span>Save PIN & Package Settings</span>
             </button>
           </div>
         </form>

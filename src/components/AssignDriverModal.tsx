@@ -3,10 +3,20 @@ import {
   Booking,
   FleetDriver,
   BLUEPRINT_CONSTRAINTS,
+  WHATSAPP_CLOUD_CONFIG,
   sanitizeString,
 } from '../types/safar';
 import { normalizeIndianPhone } from './NewBookingModal';
-import { X, UserCheck, Phone, Car, CheckCircle2, Smartphone } from 'lucide-react';
+import { triggerAutomatedWhatsAppWorkflow } from '../lib/pdfAndApis';
+import {
+  X,
+  UserCheck,
+  Phone,
+  Car,
+  CheckCircle2,
+  Smartphone,
+  MessageSquare,
+} from 'lucide-react';
 
 interface AssignDriverModalProps {
   booking: Booking;
@@ -32,17 +42,19 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
 }) => {
   const [driverName, setDriverName] = useState(booking.driverName || '');
   const [driverPhone, setDriverPhone] = useState(booking.driverPhone || '+91 ');
-  const [vehicleNumber, setVehicleNumber] = useState(booking.vehicleNumber || '');
+  const [vehicleNumber, setVehicleNumber] = useState(
+    booking.vehicleNumber || ''
+  );
   const [vehicleModel, setVehicleModel] = useState(
     booking.vehicleModel || `${booking.vehicleCategory} AC Cab`
   );
   const [markConfirmed, setMarkConfirmed] = useState(
     booking.status === 'Pending' ? true : booking.status === 'Confirmed'
   );
+  const [autoSendWhatsAppCloud, setAutoSendWhatsAppCloud] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Prioritize drivers matching the booked vehicle category, then show all verified drivers
   const matchingDrivers = fleetDrivers.filter(
     (d) => d.vehicleCategory === booking.vehicleCategory
   );
@@ -59,25 +71,40 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = sanitizeString(driverName, BLUEPRINT_CONSTRAINTS.MAX_DRIVER_NAME);
+    const cleanName = sanitizeString(
+      driverName,
+      BLUEPRINT_CONSTRAINTS.MAX_DRIVER_NAME
+    );
     const normalizedPhone = normalizeIndianPhone(driverPhone);
-    const cleanPhone = sanitizeString(normalizedPhone, BLUEPRINT_CONSTRAINTS.MAX_PHONE);
+    const cleanPhone = sanitizeString(
+      normalizedPhone,
+      BLUEPRINT_CONSTRAINTS.MAX_PHONE
+    );
     const cleanPlate = sanitizeString(
       vehicleNumber.toUpperCase(),
       BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_NUMBER
     );
-    const cleanModel = sanitizeString(vehicleModel, BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_MODEL);
+    const cleanModel = sanitizeString(
+      vehicleModel,
+      BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_MODEL
+    );
 
     if (cleanName.length < 2) {
-      setValidationError('Please enter a valid Driver Name (at least 2 characters).');
+      setValidationError(
+        'Please enter a valid Driver Name (at least 2 characters).'
+      );
       return;
     }
     if (!BLUEPRINT_CONSTRAINTS.PHONE_REGEX.test(cleanPhone)) {
-      setValidationError('Please enter a valid 10-digit Indian mobile number (e.g. 9811427650).');
+      setValidationError(
+        'Please enter a valid 10-digit Indian mobile number (e.g. 9811427650).'
+      );
       return;
     }
     if (cleanPlate.length < 4) {
-      setValidationError('Please enter a valid Vehicle Registration Number (e.g. DL 01 CAB 6812).');
+      setValidationError(
+        'Please enter a valid Vehicle Registration Number (e.g. DL 01 CAB 6812).'
+      );
       return;
     }
 
@@ -91,9 +118,29 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
         vehicleModel: cleanModel,
         markConfirmed,
       });
+
+      if (autoSendWhatsAppCloud) {
+        const updatedBooking: Booking = {
+          ...booking,
+          driverName: cleanName,
+          driverPhone: cleanPhone,
+          vehicleNumber: cleanPlate,
+          vehicleModel: cleanModel,
+          status: markConfirmed ? 'Confirmed' : booking.status,
+        };
+        triggerAutomatedWhatsAppWorkflow(updatedBooking, {
+          sendCustomerConfirmation: true,
+          sendDriverPickupAlert: true,
+        }).catch(() => {
+          // non-blocking
+        });
+      }
+
       onClose();
     } catch (err: unknown) {
-      setValidationError(err instanceof Error ? err.message : 'Failed to assign driver');
+      setValidationError(
+        err instanceof Error ? err.message : 'Failed to assign driver'
+      );
     } finally {
       setSaving(false);
     }
@@ -109,7 +156,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
               Assign Chauffeur & Vehicle · {booking.bookingId}
             </h2>
             <p className="text-xs font-medium text-slate-300 mt-0.5">
-              Syncs immediately to {booking.customerName}&apos;s &apos;My Rides&apos; screen on safarindiacabs.com
+              Syncs to {booking.customerName}&apos;s &apos;My Rides&apos; & triggers Meta WhatsApp Cloud API alerts
             </p>
           </div>
           <button
@@ -179,7 +226,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
 
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                Driver Mobile Number *
+                Driver Mobile Number * (Receives Pickup Alert)
               </label>
               <div className="relative">
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -189,7 +236,9 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   maxLength={BLUEPRINT_CONSTRAINTS.MAX_PHONE}
                   value={driverPhone}
                   onChange={(e) => setDriverPhone(e.target.value)}
-                  onBlur={() => setDriverPhone((prev) => normalizeIndianPhone(prev))}
+                  onBlur={() =>
+                    setDriverPhone((prev) => normalizeIndianPhone(prev))
+                  }
                   placeholder="+91 98182 74105"
                   className="w-full pl-9 pr-3 py-2.5 text-sm font-mono font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
                 />
@@ -207,7 +256,9 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   required
                   maxLength={BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_NUMBER}
                   value={vehicleNumber}
-                  onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
+                  onChange={(e) =>
+                    setVehicleNumber(e.target.value.toUpperCase())
+                  }
                   placeholder="DL 01 CAB 6812"
                   className="w-full pl-9 pr-3 py-2.5 text-sm font-mono font-bold uppercase bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
                 />
@@ -238,10 +289,33 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 className="w-4 h-4 rounded border-slate-300 accent-amber-500"
               />
               <span>
-                Automatically mark booking status as <strong>CONFIRMED (Allotted)</strong> upon assignment
+                Automatically mark booking status as{' '}
+                <strong>CONFIRMED (Allotted)</strong> upon assignment
               </span>
             </label>
           )}
+
+          {/* Meta WhatsApp Cloud API Automated Dual Alert Toggle */}
+          <div className="p-3.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-800 flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              id="assign-wa-cloud"
+              checked={autoSendWhatsAppCloud}
+              onChange={(e) => setAutoSendWhatsAppCloud(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-emerald-400 accent-emerald-600"
+            />
+            <label
+              htmlFor="assign-wa-cloud"
+              className="text-xs text-emerald-950 dark:text-emerald-200 cursor-pointer leading-relaxed"
+            >
+              <strong className="font-extrabold inline-flex items-center gap-1">
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                Auto-Send Meta WhatsApp Cloud API Alerts ({WHATSAPP_CLOUD_CONFIG.phoneNumberId}):
+              </strong>{' '}
+              Sends <strong>1. Driver & Vehicle Confirmation to Customer ({booking.customerPhone})</strong> and{' '}
+              <strong>2. New Pickup Duty Alert to Driver ({driverPhone.trim() || 'Driver Mobile'})</strong>.
+            </label>
+          </div>
 
           {/* Customer 'My Rides' Real-Time Card Preview */}
           <div className="p-4 rounded-xl bg-slate-900 dark:bg-slate-950 border-2 border-slate-800 text-white space-y-2.5">
@@ -250,25 +324,34 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 <Smartphone className="w-3.5 h-3.5 text-amber-400" />
                 Customer App &apos;My Rides&apos; Live Preview (safarindiacabs.com)
               </span>
-              <span className="font-mono text-amber-400 font-extrabold">{booking.bookingId}</span>
+              <span className="font-mono text-amber-400 font-extrabold">
+                {booking.bookingId}
+              </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800 text-xs">
               <div>
-                <div className="text-slate-400 font-semibold">Assigned Chauffeur</div>
+                <div className="text-slate-400 font-semibold">
+                  Assigned Chauffeur
+                </div>
                 <div className="font-extrabold text-white mt-0.5">
                   {driverName.trim() || 'Awaiting Assignment'}
                 </div>
               </div>
               <div>
-                <div className="text-slate-400 font-semibold">Chauffeur Contact</div>
+                <div className="text-slate-400 font-semibold">
+                  Chauffeur Contact
+                </div>
                 <div className="font-mono font-bold text-white mt-0.5">
                   {driverPhone.trim() || '—'}
                 </div>
               </div>
               <div>
-                <div className="text-slate-400 font-semibold">Vehicle Plate & Model</div>
+                <div className="text-slate-400 font-semibold">
+                  Vehicle Plate & Model
+                </div>
                 <div className="font-mono font-extrabold text-amber-300 mt-0.5">
-                  {vehicleNumber.trim() || '—'} · {vehicleModel.trim() || booking.vehicleCategory}
+                  {vehicleNumber.trim() || '—'} ·{' '}
+                  {vehicleModel.trim() || booking.vehicleCategory}
                 </div>
               </div>
             </div>
@@ -289,7 +372,11 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
               className="px-5 py-2.5 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 rounded-xl transition-colors inline-flex items-center gap-1.5 shadow-md cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{saving ? 'Syncing to Customer App...' : 'Assign Driver & Publish to My Rides'}</span>
+              <span>
+                {saving
+                  ? 'Syncing & Dispatching WhatsApp...'
+                  : 'Assign Driver & Send WhatsApp Alerts'}
+              </span>
             </button>
           </div>
         </form>

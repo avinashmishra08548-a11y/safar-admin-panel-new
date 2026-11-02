@@ -116,16 +116,54 @@ export function clampNumber(val: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(val), min), max);
 }
 
+/* ============================================================================
+ * OFFICIAL COMPANY GST, CONTACT & BRANDING CONSTANTS
+ * ========================================================================== */
 export const OFFICIAL_GSTIN = '07DQHPA3025F1ZD';
 export const OFFICIAL_SAC_CODE = '996412';
 export const OFFICIAL_LOGO_URL =
   '/assets/aistudio/file_0000000069908211adc71b630e4b7dee_2c93ef6f.png';
 export const OFFICIAL_BANNER_URL =
   '/assets/aistudio/Screenshot_20261024_012510_Chrome_60fd6972.jpg';
-export const OFFICIAL_COMPANY_NAME = 'Safar India Cabs';
-export const OFFICIAL_LEGAL_NAME = 'SafarIndiaCabs · A1 Cab Services (N. India)';
+export const OFFICIAL_COMPANY_NAME = 'SafarIndiaCabs';
+export const OFFICIAL_LEGAL_NAME = 'SAFAR INDIA CABS (INDIA)';
+export const OFFICIAL_PROPRIETOR = 'Aman Mishra';
+export const OFFICIAL_EMAIL = 'Safarindiacabs01@gmail.com';
+export const OFFICIAL_HELPLINE = '+91 7710080992';
+export const OFFICIAL_ADMIN_WHATSAPP = '917710080992';
+export const OFFICIAL_REGISTERED_ADDRESS =
+  'H NO 143 STREET 4 JHARODA MAJRA NORTH DELHI BURARI 110084';
+export const OFFICIAL_ADMIN_PORTAL_URL = 'https://admin.safarindiacabs.com';
 export const OFFICIAL_TAGLINE = 'Your Journey, Our Priority';
 export const ANDROID_PACKAGE_NAME = 'com.safarindiacabs.app';
+
+/* ============================================================================
+ * OLA MAPS, RAZORPAY & META WHATSAPP CLOUD API CONFIG
+ * ========================================================================== */
+export const OLA_MAPS_CONFIG = {
+  apiKey: 'TSHtH9B6FJ9B5U1NyR0Q1YZ7oZyxna55QwWZc3oR',
+  clientId: '3d6c8822-79bd-4f31-accb-bc8229b1b391',
+  clientSecret: 'e3ba8458aaab47778880e6f127ea8386',
+  autocompleteEndpoint: 'https://api.olamaps.io/places/v1/autocomplete',
+  detailsEndpoint: 'https://api.olamaps.io/places/v1/details',
+  directionsEndpoint: 'https://api.olamaps.io/routing/v1/directions',
+  distanceMatrixEndpoint: 'https://api.olamaps.io/routing/v1/distanceMatrix',
+} as const;
+
+export const WHATSAPP_CLOUD_CONFIG = {
+  phoneNumberId: '902764639583293',
+  wabaId: '837811205522579',
+  accessToken:
+    'EAAQJwftBnh4BSwB6NchrSSk726GnyhBhQ7KsRCdJjYD5ZBM9SzymkFEypXNws84BpndbNVe3VpY48pDjjXZBZAdKbPboZBXlf8nzHhemNmvWNlwStfkcGSFfMTpPTExnhZAalcnx36ZBqXRhJeZBJo1NoJtjXhdZBo1zTJjywIOp6XKyW8poIxwlc5syie5J2qvubAZDZD',
+  endpoint: 'https://graph.facebook.com/v20.0/902764639583293/messages',
+  adminWhatsappNumber: '917710080992',
+} as const;
+
+export const RAZORPAY_DEFAULT_CONFIG = {
+  keyId: 'rzp_test_1DP5mmOlF5G5ag',
+  createOrderEndpoint: '/api/create-order',
+  verifyPaymentEndpoint: '/api/verify-payment',
+} as const;
 
 export interface CustomBillDraft {
   invoiceNumber: string;
@@ -162,6 +200,7 @@ export interface CustomBillDraft {
   includeMohurStamp: boolean;
   includeDigitalSign: boolean;
   authorizedSignatoryName: string;
+  digitalSignatureTimestamp?: string;
   notes: string;
 }
 
@@ -173,6 +212,9 @@ export interface GatewayConfig {
   autoSplitAdvance20Pct: boolean;
   upiIntentEnabled: boolean;
   merchantUpiId: string;
+  olaMapsEnabled: boolean;
+  olaMapsApiKey: string;
+  olaMapsClientId: string;
   smsGatewayProvider: 'MSG91' | 'Fast2SMS';
   smsEnabled: boolean;
   smsSenderId: string;
@@ -180,7 +222,9 @@ export interface GatewayConfig {
   smsBookingTemplateId: string;
   whatsappApiEnabled: boolean;
   whatsappBusinessPhone: string;
+  whatsappPhoneNumberId: string;
   whatsappWabaId: string;
+  whatsappAccessToken: string;
   autoWhatsappOnDriverAssign: boolean;
 }
 
@@ -204,20 +248,25 @@ export interface AppReleaseInfo {
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   razorpayEnabled: true,
-  razorpayMode: 'Live',
-  razorpayKeyId: 'rzp_live_SIC8924A1Cab',
+  razorpayMode: 'Test',
+  razorpayKeyId: RAZORPAY_DEFAULT_CONFIG.keyId,
   razorpayWebhookSecret: 'whsec_safarindiacabs_live_2026',
   autoSplitAdvance20Pct: true,
   upiIntentEnabled: true,
   merchantUpiId: 'safarindiacabs@icici',
+  olaMapsEnabled: true,
+  olaMapsApiKey: OLA_MAPS_CONFIG.apiKey,
+  olaMapsClientId: OLA_MAPS_CONFIG.clientId,
   smsGatewayProvider: 'MSG91',
   smsEnabled: true,
   smsSenderId: 'SAFRCB',
   smsDltEntityId: '1201168492018472910',
   smsBookingTemplateId: '1207168940182940122',
   whatsappApiEnabled: true,
-  whatsappBusinessPhone: '+91 98114 27650',
-  whatsappWabaId: 'WABA-SIC-NORTH-INDIA-01',
+  whatsappBusinessPhone: OFFICIAL_HELPLINE,
+  whatsappPhoneNumberId: WHATSAPP_CLOUD_CONFIG.phoneNumberId,
+  whatsappWabaId: WHATSAPP_CLOUD_CONFIG.wabaId,
+  whatsappAccessToken: WHATSAPP_CLOUD_CONFIG.accessToken,
   autoWhatsappOnDriverAssign: true,
 };
 
@@ -230,7 +279,7 @@ export const DEFAULT_APP_RELEASE_INFO: AppReleaseInfo = {
   targetSdk: 35,
   aabSizeMb: '18.4 MB',
   apkSizeMb: '24.8 MB',
-  lastBuildDate: '2026-11-01 19:30 IST',
+  lastBuildDate: '2026-11-02 09:50 IST',
   keystoreAlias: 'safarindiacabs-release-key',
   sha1Fingerprint: '5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25',
   sha256Fingerprint:
