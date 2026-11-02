@@ -12,6 +12,37 @@ export type PaymentMode = '20% Advance' | 'Full Paid';
 export type DriverDutyStatus = 'Available' | 'On Trip' | 'Off Duty';
 export type DriverKycStatus = 'Verified' | 'Pending Review' | 'Expiring Soon';
 
+export type BookingSource =
+  | 'Customer Android App'
+  | 'Website'
+  | 'Admin Created Booking'
+  | 'Customer Support Created Booking'
+  | 'Corporate Booking';
+
+export type DetailedWorkflowStage =
+  | 'Requested'
+  | 'Under Review'
+  | 'Fare Confirmed'
+  | 'Confirmed'
+  | 'Driver Assigned'
+  | 'Driver Accepted'
+  | 'Driver Reached Pickup'
+  | 'Trip Started'
+  | 'Trip Completed'
+  | 'Customer Cancelled'
+  | 'Admin Cancelled'
+  | 'Driver Unavailable'
+  | 'Payment Pending'
+  | 'Refund Processing'
+  | 'Refunded';
+
+export interface BookingAuditEntry {
+  timestamp: string;
+  actor: string;
+  stage: string;
+  note: string;
+}
+
 export interface Booking {
   bookingId: string;
   customerName: string;
@@ -23,6 +54,8 @@ export interface Booking {
   dropCity: string;
   pickupDate: string; // YYYY-MM-DD
   pickupTime: string;
+  returnDate?: string;
+  returnTime?: string;
   vehicleCategory: VehicleCategory;
   distanceKm: number;
   tripDays: number;
@@ -38,6 +71,13 @@ export interface Booking {
   advancePaid: number;
   balanceAmount: number;
   status: BookingStatus;
+  workflowStage?: DetailedWorkflowStage;
+  bookingSource?: BookingSource;
+  specialInstructions?: string;
+  internalNotes?: string;
+  refundStatus?: 'None' | 'Refund Processing' | 'Refunded';
+  refundAmount?: number;
+  auditHistory?: BookingAuditEntry[];
   driverName: string;
   driverPhone: string;
   vehicleNumber: string;
@@ -71,6 +111,10 @@ export interface FleetDriver {
   driverId: string;
   driverName: string;
   driverPhone: string;
+  alternatePhone?: string;
+  email?: string;
+  currentAddress?: string;
+  permanentAddress?: string;
   vehicleNumber: string;
   vehicleModel: string;
   vehicleCategory: VehicleCategory;
@@ -78,6 +122,15 @@ export interface FleetDriver {
   dutyStatus: DriverDutyStatus;
   kycStatus: DriverKycStatus;
   dlNumber: string;
+  dlExpiryDate?: string;
+  aadhaarKycRef?: string;
+  policeVerificationStatus?: 'Verified' | 'Pending' | 'In Progress';
+  emergencyContact?: string;
+  joiningDate?: string;
+  employmentType?: 'Full-Time Fleet' | 'Commission Partner' | 'Vendor Attached';
+  commissionPct?: number;
+  bankUpiDetails?: string;
+  internalRemarks?: string;
   rcVerified: boolean;
   insuranceVerified: boolean;
   rating: number;
@@ -87,6 +140,76 @@ export interface FleetDriver {
   pendingPayout: number;
   createdBy: string;
   updatedAt?: Timestamp | null;
+}
+
+export interface FleetVehicle {
+  vehicleId: string;
+  registrationNumber: string;
+  makeAndModel: string;
+  category:
+    | 'Hatchback'
+    | 'Sedan'
+    | 'SUV'
+    | 'Ertiga / 6 Seater'
+    | 'Innova'
+    | 'Innova Crysta'
+    | 'Tempo Traveller'
+    | 'Luxury Vehicles';
+  seatingCapacity: number;
+  acType: 'AC' | 'Non-AC';
+  fuelType: 'CNG' | 'Diesel' | 'Petrol' | 'Electric';
+  permitType: 'All-India Tourist Permit (AITP)' | 'State Commercial Permit';
+  insuranceExpiry: string;
+  fitnessExpiry: string;
+  pucExpiry: string;
+  assignedDriverName: string;
+  assignedDriverPhone: string;
+  ownerVendorName: string;
+  availabilityStatus: 'Available' | 'On Trip' | 'Maintenance' | 'Inactive';
+  lastMaintenanceDate: string;
+}
+
+export type SupportTicketCategory =
+  | 'Booking Related'
+  | 'Driver Related'
+  | 'Payment Related'
+  | 'Refund Related'
+  | 'Lost and Found'
+  | 'Trip Experience'
+  | 'Cancellation'
+  | 'Other Issues';
+
+export interface SupportTicket {
+  ticketId: string;
+  bookingId: string;
+  customerName: string;
+  customerPhone: string;
+  category: SupportTicketCategory;
+  priority: 'High' | 'Medium' | 'Low';
+  status: 'Open' | 'In Progress' | 'Escalated' | 'Resolved';
+  assignedAgent: string;
+  subject: string;
+  internalNotes: string;
+  refundRequestedAmount: number;
+  createdAt: string;
+  resolutionSummary?: string;
+}
+
+export interface CmsPortalConfig {
+  heroHeadline: string;
+  promoBannerText: string;
+  promoCode: string;
+  promoDiscountInr: number;
+  minimumAndroidAppVersion: string;
+  maintenanceMode: boolean;
+  bookingAvailabilityOnline: boolean;
+  serviceableCities: string;
+  popularRoutesList: string;
+  cancellationPolicySummary: string;
+  termsAndConditionsSummary: string;
+  whatsappBookingConfirmTemplate: string;
+  whatsappDriverAssignedTemplate: string;
+  smsOtpAndAlertTemplate: string;
 }
 
 export const BLUEPRINT_CONSTRAINTS = {
