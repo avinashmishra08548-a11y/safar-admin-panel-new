@@ -484,84 +484,34 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
   },
 ];
 
-export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [
-  {
-    driverId: 'DRV101',
-    driverName: 'NITISH KUMAR',
-    driverPhone: '+91 98189 44089',
-    vehicleNumber: 'HR55BE6324',
-    vehicleModel: 'Swift Dzire / Toyota Etios',
-    vehicleCategory: 'Sedan',
-    homeBaseCity: 'North Delhi / Burari',
-    dutyStatus: 'Available',
-    kycStatus: 'Verified',
-    dlNumber: 'HR0620140098412',
-    rcVerified: true,
-    insuranceVerified: true,
-    rating: 4.9,
-    completedTrips: 342,
-    totalEarnings: 845000,
-    commissionDeducted: 101400,
-    pendingPayout: 0,
-  },
-  {
-    driverId: 'DRV102',
-    driverName: 'Rajendra Prasad Verma',
-    driverPhone: '+91 98182 74105',
-    vehicleNumber: 'DL 01 CAB 6812',
-    vehicleModel: 'Maruti Swift Dzire Tour S',
-    vehicleCategory: 'Sedan',
-    homeBaseCity: 'New Delhi',
-    dutyStatus: 'Available',
-    kycStatus: 'Verified',
-    dlNumber: 'DL0420160184720',
-    rcVerified: true,
-    insuranceVerified: true,
-    rating: 4.8,
-    completedTrips: 289,
-    totalEarnings: 512000,
-    commissionDeducted: 61440,
-    pendingPayout: 0,
-  },
-  {
-    driverId: 'DRV103',
-    driverName: 'Mahendra Singh Rathore',
-    driverPhone: '+91 94140 88211',
-    vehicleNumber: 'HR 55 AN 3319',
-    vehicleModel: 'Toyota Innova Crysta ZX',
-    vehicleCategory: 'Innova Crysta',
-    homeBaseCity: 'Delhi NCR / Gurugram',
-    dutyStatus: 'Available',
-    kycStatus: 'Verified',
-    dlNumber: 'MH1220150073190',
-    rcVerified: true,
-    insuranceVerified: true,
-    rating: 4.9,
-    completedTrips: 410,
-    totalEarnings: 980000,
-    commissionDeducted: 117600,
-    pendingPayout: 0,
-  },
-  {
-    driverId: 'DRV104',
-    driverName: 'Balwinder Singh Gill',
-    driverPhone: '+91 98721 44901',
-    vehicleNumber: 'PB 01 D 7732',
-    vehicleModel: 'Maruti Suzuki Ertiga ZXi',
-    vehicleCategory: 'SUV',
-    homeBaseCity: 'Chandigarh / Punjab',
-    dutyStatus: 'Available',
-    kycStatus: 'Verified',
-    dlNumber: 'PB6520170042911',
-    rcVerified: true,
-    insuranceVerified: true,
-    rating: 4.8,
-    completedTrips: 198,
-    totalEarnings: 428000,
-    commissionDeducted: 51360,
-    pendingPayout: 0,
-  },
-];
+const LEGACY_SAMPLE_DRIVER_IDS = new Set([
+  'DRV101',
+  'DRV102',
+  'DRV103',
+  'DRV104',
+]);
 
-// All sample/example bookings removed as requested by owner — only real bookings are shown
+const LEGACY_SAMPLE_DRIVER_NAMES = new Set([
+  'nitish kumar',
+  'rajendra prasad verma',
+  'mahendra singh rathore',
+  'balwinder singh gill',
+]);
+
+export function isSampleDemoDriver(d: FleetDriver): boolean {
+  if (!d) return false;
+  const nameLower = (d.driverName || '').trim().toLowerCase();
+  if (LEGACY_SAMPLE_DRIVER_NAMES.has(nameLower)) return true;
+  if (
+    LEGACY_SAMPLE_DRIVER_IDS.has(d.driverId) &&
+    LEGACY_SAMPLE_DRIVER_NAMES.has(nameLower)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// All sample/example drivers and bookings removed as requested by owner — only real onboarded fleet & customer bookings are shown
+export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [];
 export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [];
+

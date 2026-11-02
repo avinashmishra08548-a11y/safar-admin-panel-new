@@ -202,16 +202,16 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
   return (
     <section className="space-y-6">
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-white via-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl p-4 shadow-2xs">
         <div>
-          <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 font-display">
-            Bill Generator (Rectangular Stamp & Pre-Filled Aman Mishra Signature)
+          <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100 font-display">
+            Corporate Tax Invoice Studio (Official Seal & Authorised Signature)
           </h1>
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Official {OFFICIAL_COMPANY_NAME} GST Tax Invoices · Proprietor:{' '}
-            <strong>{OFFICIAL_PROPRIETOR}</strong> · GSTIN:{' '}
-            <strong>{OFFICIAL_GSTIN}</strong> · SAC:{' '}
-            <strong>{OFFICIAL_SAC_CODE}</strong>
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+            Official {OFFICIAL_COMPANY_NAME} Tax Invoices · Proprietor:{' '}
+            <strong className="font-bold text-slate-900 dark:text-white">{OFFICIAL_PROPRIETOR}</strong> · GSTIN:{' '}
+            <strong className="font-mono font-bold text-slate-900 dark:text-white">{OFFICIAL_GSTIN}</strong> · SAC:{' '}
+            <strong className="font-mono font-bold text-slate-900 dark:text-white">{OFFICIAL_SAC_CODE}</strong>
           </p>
         </div>
 
@@ -319,10 +319,10 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
           </div>
 
-          {/* Rectangular Stamp & Digital Sign Controls */}
+          {/* Official Seal & Digital Signature Controls */}
           <div className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-800">
-            <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
-              Rectangular Stamp & Pre-Filled Signature Controls
+            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+              Official Rectangular Seal & Digital Signature Controls
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -330,14 +330,14 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
                 onClick={() =>
                   updateField('includeMohurStamp', !draft.includeMohurStamp)
                 }
-                className={`p-2.5 rounded-xl border-2 text-xs font-extrabold flex items-center gap-2 cursor-pointer transition-colors ${
+                className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
                   draft.includeMohurStamp
-                    ? 'bg-blue-50 dark:bg-blue-950/50 border-blue-400 dark:border-blue-700 text-blue-900 dark:text-blue-200'
-                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
+                    ? 'bg-slate-900 text-white dark:bg-blue-950/60 border-slate-900 dark:border-blue-700 dark:text-blue-200'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-800 text-slate-500'
                 }`}
               >
                 <Stamp className="w-4 h-4 shrink-0" />
-                <span>Rect. Stamp: {draft.includeMohurStamp ? 'ON' : 'OFF'}</span>
+                <span>Official Seal: {draft.includeMohurStamp ? 'ON' : 'OFF'}</span>
               </button>
 
               <button
@@ -593,7 +593,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Driver Bata (₹)
+                Chauffeur Allowance (₹)
               </label>
               <input
                 type="number"
