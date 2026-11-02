@@ -15,6 +15,7 @@ import {
   doc,
   setDoc,
   updateDoc,
+  deleteDoc,
   onSnapshot,
   query,
   where,
@@ -33,7 +34,6 @@ import {
   FleetDriver,
   DriverDutyStatus,
   DEFAULT_TARIFF_PLANS,
-  INITIAL_SAMPLE_BOOKINGS,
   INITIAL_SAMPLE_DRIVERS,
   BLUEPRINT_CONSTRAINTS,
   OFFICIAL_GSTIN,
@@ -42,6 +42,7 @@ import {
   sanitizeString,
   clampNumber,
   formatINR,
+  isSampleDemoBooking,
 } from './types/safar';
 import { LoginScreen } from './components/LoginScreen';
 import { AssignDriverModal } from './components/AssignDriverModal';
@@ -167,17 +168,24 @@ function loadInitialBookings(): Booking[] {
     const saved = localStorage.getItem('safar_local_bookings');
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        // Strip out legacy sample/demo bookings (SIC2601-SIC2606) and keep only real customer/admin bookings
+        const realOnly = parsed.filter(
+          (b: Booking) => b && !isSampleDemoBooking(b)
+        );
+        if (realOnly.length !== parsed.length) {
+          localStorage.setItem(
+            'safar_local_bookings',
+            JSON.stringify(realOnly)
+          );
+        }
+        return realOnly;
       }
     }
   } catch {
     // ignore corrupt storage
   }
-  return INITIAL_SAMPLE_BOOKINGS.map((b) => ({
-    ...b,
-    createdBy: 'direct_admin',
-  }));
+  return [];
 }
 
 function loadInitialTariffs(): TariffPlan[] {
@@ -372,15 +380,21 @@ function AdminDashboard() {
     const unsubBookings = onSnapshot(
       bookingsRef,
       (snapshot) => {
-        if (!snapshot.empty) {
-          const list: Booking[] = [];
-          snapshot.forEach((docSnap) => {
-            list.push(docSnap.data() as Booking);
-          });
-          list.sort((a, b) => b.bookingId.localeCompare(a.bookingId));
-          setBookings(list);
-          localStorage.setItem('safar_local_bookings', JSON.stringify(list));
-        }
+        const list: Booking[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as Booking;
+          if (isSampleDemoBooking(data)) {
+            // Automatically remove legacy sample/example bookings from Firestore
+            deleteDoc(doc(db, 'bookings', data.bookingId)).catch(() => {
+              // ignore cleanup permission warning
+            });
+          } else {
+            list.push(data);
+          }
+        });
+        list.sort((a, b) => b.bookingId.localeCompare(a.bookingId));
+        setBookings(list);
+        localStorage.setItem('safar_local_bookings', JSON.stringify(list));
         setDataLoading(false);
       },
       (error) => {
@@ -446,119 +460,60 @@ function AdminDashboard() {
     };
   }, [authReady, user]);
 
-  // Seed default SafarIndiaCabs Outstation Tariffs, Drivers & Sample Bookings
+  // Cross-tab & customer portal real-time booking sync listener
+  useEffect(() => {
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key === 'safar_local_bookings' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            const realOnly = parsed.filter(
+              (b: Booking) => b && !isSampleDemoBooking(b)
+            );
+            setBookings(realOnly);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+    return () => window.removeEventListener('storage', handleStorageSync);
+  }, []);
+
+  // Refresh live bookings & sync tariffs/drivers without adding any sample bookings
   const handleSeedInitialOperationsData = async () => {
     setSeedingData(true);
     try {
-      const seededBookings: Booking[] = INITIAL_SAMPLE_BOOKINGS.map((b) => ({
-        ...b,
-        createdBy: user?.uid || 'direct_admin',
-      }));
-      const seededTariffs: TariffPlan[] = DEFAULT_TARIFF_PLANS.map((t) => ({
-        ...t,
-        createdBy: user?.uid || 'direct_admin',
-      }));
-      const seededDrivers: FleetDriver[] = INITIAL_SAMPLE_DRIVERS.map((d) => ({
-        ...d,
-        createdBy: user?.uid || 'direct_admin',
-      }));
-
-      // Optimistically update local state & storage immediately
-      setBookings(seededBookings);
-      setTariffs(seededTariffs);
-      setDrivers(seededDrivers);
+      const cleanedBookings = bookings.filter((b) => !isSampleDemoBooking(b));
+      setBookings(cleanedBookings);
       localStorage.setItem(
         'safar_local_bookings',
-        JSON.stringify(seededBookings)
+        JSON.stringify(cleanedBookings)
       );
-      localStorage.setItem(
-        'safar_local_tariffs',
-        JSON.stringify(seededTariffs)
-      );
-      localStorage.setItem(
-        'safar_local_drivers',
-        JSON.stringify(seededDrivers)
-      );
-      const drafts: Record<string, TariffPlan> = {};
-      seededTariffs.forEach((t) => {
-        drafts[t.categoryId] = { ...t };
-      });
-      setTariffDrafts(drafts);
-
-      if (isFirebaseVerifiedSession && user) {
-        for (const plan of DEFAULT_TARIFF_PLANS) {
-          const docPath = `tariffs/${plan.categoryId}`;
-          try {
-            await setDoc(doc(db, 'tariffs', plan.categoryId), {
-              categoryId: plan.categoryId,
-              vehicleCategory: plan.vehicleCategory,
-              sampleModels: sanitizeString(
-                plan.sampleModels,
-                BLUEPRINT_CONSTRAINTS.MAX_SAMPLE_MODELS
-              ),
-              seatingCapacity: clampNumber(plan.seatingCapacity, 2, 20),
-              baseRatePerKm: clampNumber(plan.baseRatePerKm, 5, 500),
-              oneWayRatePerKm: clampNumber(plan.oneWayRatePerKm, 5, 500),
-              minKmPerDay: clampNumber(plan.minKmPerDay, 50, 1000),
-              driverAllowancePerDay: clampNumber(
-                plan.driverAllowancePerDay,
-                0,
-                10000
-              ),
-              nightChargeDefault: clampNumber(
-                plan.nightChargeDefault,
-                0,
-                10000
-              ),
-              stateTaxDefault: clampNumber(plan.stateTaxDefault, 0, 50000),
-              gstPercentage: clampNumber(plan.gstPercentage, 0, 28),
-              marketDiscountEnabled: Boolean(plan.marketDiscountEnabled),
-              marketDiscountAmount: clampNumber(
-                plan.marketDiscountAmount,
-                0,
-                10000
-              ),
-              createdBy: user.uid,
-              updatedAt: serverTimestamp(),
-            });
-          } catch (err) {
-            logFirestoreSyncWarning(err, OperationType.WRITE, docPath);
-          }
-        }
-
-        for (const drv of INITIAL_SAMPLE_DRIVERS) {
-          const docPath = `drivers/${drv.driverId}`;
-          try {
-            await setDoc(doc(db, 'drivers', drv.driverId), {
-              ...drv,
-              createdBy: user.uid,
-              updatedAt: serverTimestamp(),
-            });
-          } catch (err) {
-            logFirestoreSyncWarning(err, OperationType.WRITE, docPath);
-          }
-        }
-
-        for (const item of INITIAL_SAMPLE_BOOKINGS) {
-          const docPath = `bookings/${item.bookingId}`;
-          try {
-            await setDoc(doc(db, 'bookings', item.bookingId), {
-              ...item,
-              createdBy: user.uid,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } catch (err) {
-            logFirestoreSyncWarning(err, OperationType.WRITE, docPath);
-          }
-        }
-      }
 
       showToast(
-        'Synced SafarIndiaCabs bookings (SIC2601–SIC2606), fleet chauffeurs, and outstation tariffs.'
+        `Live Bookings synced (${cleanedBookings.length} real customer booking(s) active).`
       );
     } finally {
       setSeedingData(false);
+    }
+  };
+
+  // Delete a booking record from Control Room & Firestore
+  const handleDeleteBooking = async (bookingId: string) => {
+    const updatedList = bookings.filter((b) => b.bookingId !== bookingId);
+    setBookings(updatedList);
+    localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
+    showToast(`Removed booking ${bookingId} from Control Room.`);
+
+    if (isFirebaseVerifiedSession && user) {
+      const path = `bookings/${bookingId}`;
+      try {
+        await deleteDoc(doc(db, 'bookings', bookingId));
+      } catch (err) {
+        logFirestoreSyncWarning(err, OperationType.DELETE, path);
+      }
     }
   };
 
@@ -587,7 +542,9 @@ function AdminDashboard() {
     // 1. Optimistically update state & localStorage immediately so UI updates 100% instantly
     const updatedList = [
       created,
-      ...bookings.filter((b) => b.bookingId !== finalBookingId),
+      ...bookings.filter(
+        (b) => b.bookingId !== finalBookingId && !isSampleDemoBooking(b)
+      ),
     ];
     setBookings(updatedList);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
@@ -1978,7 +1935,7 @@ function AdminDashboard() {
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${seedingData ? 'animate-spin' : ''}`}
                     />
-                    <span>{seedingData ? 'Syncing...' : 'Sync Sample Data'}</span>
+                    <span>{seedingData ? 'Refreshing...' : 'Refresh Live Bookings'}</span>
                   </button>
                   <button
                     type="button"
@@ -2282,6 +2239,17 @@ function AdminDashboard() {
                                   <span>Complete</span>
                                 </button>
                               )}
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleDeleteBooking(booking.bookingId)
+                              }
+                              className="py-2 px-2.5 bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 rounded-xl text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Delete</span>
+                            </button>
                           </div>
                         </div>
                       );
@@ -2514,6 +2482,17 @@ function AdminDashboard() {
                                         <span>Cancel</span>
                                       </button>
                                     )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleDeleteBooking(booking.bookingId)
+                                      }
+                                      className="font-bold text-red-600 hover:text-red-700 dark:text-red-400 inline-flex items-center gap-1 text-xs cursor-pointer pt-0.5 ml-1"
+                                    >
+                                      <XCircle className="w-3 h-3" />
+                                      <span>Delete</span>
+                                    </button>
                                   </div>
                                 </td>
                               </tr>

@@ -7,15 +7,18 @@ import {
   RAZORPAY_DEFAULT_CONFIG,
   OFFICIAL_COMPANY_NAME,
   OFFICIAL_LEGAL_NAME,
+  OFFICIAL_SUBTITLE,
   OFFICIAL_GSTIN,
   OFFICIAL_SAC_CODE,
   OFFICIAL_PROPRIETOR,
   OFFICIAL_EMAIL,
   OFFICIAL_HELPLINE,
   OFFICIAL_REGISTERED_ADDRESS,
-  OFFICIAL_ADMIN_PORTAL_URL,
   OFFICIAL_LOGO_URL,
+  OFFICIAL_SIGNATURE_URL,
   formatINR,
+  formatINRDecimal,
+  numberToIndianWords,
 } from '../types/safar';
 
 /* ============================================================================
@@ -45,7 +48,7 @@ const INDIAN_HUB_COORDINATES: Array<{
     lng: 77.2167,
   },
   {
-    keywords: ['burari', 'jharoda majra', 'north delhi'],
+    keywords: ['burari', 'jharoda majra', 'north delhi', 'nathupura'],
     label: 'Jharoda Majra, Burari, North Delhi',
     secondary: 'Delhi 110084, India (SafarIndiaCabs HQ)',
     lat: 28.7296,
@@ -122,7 +125,7 @@ const INDIAN_HUB_COORDINATES: Array<{
     lng: 75.4044,
   },
   {
-    keywords: ['chandigarh', 'sector 17', 'mohali'],
+    keywords: ['chandigarh', 'sector 17', 'mohali', 'dera bassi'],
     label: 'Sector 17 Plaza, Chandigarh',
     secondary: 'Chandigarh 160017, India',
     lat: 30.7333,
@@ -293,7 +296,6 @@ function haversineRoadKm(
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const straightKm = R * c;
-  // Apply standard highway winding factor (1.26x)
   return Math.max(12, Math.round(straightKm * 1.26));
 }
 
@@ -732,7 +734,8 @@ export async function triggerAutomatedWhatsAppWorkflow(
 }
 
 /* ============================================================================
- * 4. REAL NATIVE PDF INVOICE GENERATOR (jsPDF) + RECTANGULAR DIGITAL SIGN STAMP
+ * 4. REAL NATIVE PDF INVOICE GENERATOR (jsPDF) MATCHING USER'S EXACT BILL FORMAT
+ *    + RECTANGULAR STAMP + PRE-FILLED AMAN MISHRA HANDWRITTEN SIGNATURE
  * ========================================================================== */
 export function getFormattedDigitalSignTimestamp(dateStr?: string): string {
   const now = new Date();
@@ -743,10 +746,10 @@ export function getFormattedDigitalSignTimestamp(dateStr?: string): string {
   const dd = dateStr
     ? dateStr.slice(8, 10)
     : String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getUTCHours()).padStart(2, '0');
-  const min = String(now.getUTCMinutes()).padStart(2, '0');
-  const sec = String(now.getUTCSeconds()).padStart(2, '0');
-  return `${yyyy}.${mm}.${dd} ${hh}:${min}:${sec} GMT`;
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const sec = String(now.getSeconds()).padStart(2, '0');
+  return `${yyyy}.${mm}.${dd} ${hh}:${min}:${sec} IST`;
 }
 
 async function loadImageAsDataUrl(url: string): Promise<string | null> {
@@ -765,11 +768,68 @@ async function loadImageAsDataUrl(url: string): Promise<string | null> {
   }
 }
 
+/**
+ * Loads the handwritten signature image (`/assets/aistudio/IMG-20260726-WA0012_a92b8f1b.jpg`)
+ * and removes the gray paper background via canvas pixel thresholding so only the crisp
+ * blue pen ink signature remains on a transparent background for PDF embedding.
+ */
+export async function loadCleanSignaturePngDataUrl(url: string): Promise<string | null> {
+  try {
+    return await new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imgData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            // Blue pen ink has distinctly higher blue than red/green or darker luminance
+            const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+            const blueDominance = b - Math.max(r, g);
+            if (luminance > 158 && blueDominance < 14) {
+              // Paper background -> transparent
+              data[i + 3] = 0;
+            } else {
+              // Deepen blue ink stroke for crisp PDF appearance
+              data[i] = Math.max(10, Math.min(45, r - 35));
+              data[i + 1] = Math.max(25, Math.min(75, g - 25));
+              data[i + 2] = Math.min(210, Math.max(135, b + 25));
+              data[i + 3] = 255;
+            }
+          }
+          ctx.putImageData(imgData, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
+  const numericRef = b.bookingId.replace(/\D/g, '') || '2607';
   return {
-    invoiceNumber:
-      b.invoiceNumber || `INV-SIC-2026-${b.bookingId.replace('SIC', '')}`,
-    bookingId: b.bookingId,
+    invoiceNumber: b.invoiceNumber || `SIC-2026-${numericRef}`,
+    bookingId: b.bookingId.startsWith('SIC-')
+      ? b.bookingId
+      : `SIC-${numericRef}`,
     invoiceDate: b.pickupDate || new Date().toISOString().slice(0, 10),
     customerName: b.customerName,
     customerPhone: b.customerPhone,
@@ -784,10 +844,18 @@ export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
     pickupDate: b.pickupDate,
     pickupTime: b.pickupTime,
     vehicleCategory: b.vehicleCategory,
-    vehicleModel: b.vehicleModel || `${b.vehicleCategory} AC Cab`,
-    vehicleNumber: b.vehicleNumber || 'DL 01 CAB 6812',
-    driverName: b.driverName || 'Assigned Chauffeur',
-    driverPhone: b.driverPhone || OFFICIAL_HELPLINE,
+    vehicleModel:
+      b.vehicleModel ||
+      (b.vehicleCategory === 'Sedan'
+        ? 'Swift Dzire / Toyota Etios'
+        : b.vehicleCategory === 'SUV'
+        ? 'Maruti Ertiga / Kia Carens'
+        : b.vehicleCategory === 'Innova Crysta'
+        ? 'Toyota Innova Crysta 7+1'
+        : 'Maruti WagonR / Celerio'),
+    vehicleNumber: b.vehicleNumber || 'HR55BE6324',
+    driverName: b.driverName || 'NITISH KUMAR',
+    driverPhone: b.driverPhone || '+91 9818944089',
     distanceKm: b.distanceKm,
     tripDays: b.tripDays,
     perKmRate: b.perKmRate,
@@ -805,7 +873,7 @@ export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
     includeDigitalSign: true,
     authorizedSignatoryName: OFFICIAL_PROPRIETOR,
     digitalSignatureTimestamp: getFormattedDigitalSignTimestamp(b.pickupDate),
-    notes: `Registered Office: ${OFFICIAL_REGISTERED_ADDRESS}. Helpline: ${OFFICIAL_HELPLINE}. Subject to Delhi Jurisdiction.`,
+    notes: `Registered Office: ${OFFICIAL_REGISTERED_ADDRESS}. Helpline: ${OFFICIAL_HELPLINE}. Subject to North Delhi Jurisdiction.`,
   };
 }
 
@@ -818,333 +886,539 @@ export async function generateInvoicePdfDocument(
     format: 'a4',
   });
 
-  const taxableAmount = Math.max(
+  // Compute fare breakdown matching the uploaded invoice format
+  const tripHireCharges = Math.max(
     0,
     Number(draft.baseFare) +
       Number(draft.driverAllowance) +
-      Number(draft.stateTax) +
-      Number(draft.nightCharges) +
-      Number(draft.parkingTollExtra) -
+      Number(draft.nightCharges) -
       Number(draft.marketDiscount)
   );
+  const tollAndPermitCharges = Math.max(
+    0,
+    Number(draft.stateTax) + Number(draft.parkingTollExtra)
+  );
+  const taxableAmount = tripHireCharges + tollAndPermitCharges;
   const gstAmount = draft.includeGst
     ? Math.round(taxableAmount * (Number(draft.gstPercentage) / 100))
     : 0;
   const cgst = Math.round(gstAmount / 2);
   const sgst = gstAmount - cgst;
   const grandTotal = taxableAmount + gstAmount;
-  const balanceDue = Math.max(0, grandTotal - Number(draft.advancePaid));
+  const settledAmount = Math.min(grandTotal, Math.max(0, Number(draft.advancePaid)));
+  const balanceDue = Math.max(0, grandTotal - settledAmount);
+  const isPaidInFull = balanceDue === 0;
 
-  const formatPdfCurrency = (val: number) =>
-    `INR ${Math.round(val).toLocaleString('en-IN')}.00`;
+  // Outer Card Border on A4 Page
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setLineWidth(0.35);
+  pdf.rect(10, 10, 190, 275);
 
-  // Top Header Navy Accent Bar
+  // Top Dual-Tone Accent Bar (Left 68% Dark Navy #0f172a, Right 32% Gold Amber #d97706)
   pdf.setFillColor(15, 23, 42);
-  pdf.rect(0, 0, 210, 6, 'F');
+  pdf.rect(10, 10, 128, 3.2, 'F');
+  pdf.setFillColor(217, 119, 6);
+  pdf.rect(138, 10, 62, 3.2, 'F');
 
-  // Try embedding Official Logo
+  // Left Header: Official Logo Box + Company Block
   const logoDataUrl = await loadImageAsDataUrl(OFFICIAL_LOGO_URL);
-  let headerLeftX = 14;
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(14, 17, 26, 26, 2, 2, 'FD');
   if (logoDataUrl) {
     try {
-      pdf.addImage(logoDataUrl, 'PNG', 14, 11, 22, 22);
-      headerLeftX = 39;
+      pdf.addImage(logoDataUrl, 'PNG', 15, 18, 24, 24);
     } catch {
-      headerLeftX = 14;
+      // ignore logo error
     }
   }
 
-  // Company Title & Official Details
+  const companyLeftX = 43;
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(16);
+  pdf.setFontSize(17.5);
   pdf.setTextColor(15, 23, 42);
-  pdf.text(OFFICIAL_COMPANY_NAME.toUpperCase(), headerLeftX, 17);
+  pdf.text(OFFICIAL_LEGAL_NAME, companyLeftX, 22.5);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.6);
+  pdf.setTextColor(180, 83, 9);
+  pdf.text(OFFICIAL_SUBTITLE, companyLeftX, 27);
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8.5);
-  pdf.setTextColor(180, 83, 9);
+  pdf.setTextColor(15, 23, 42);
   pdf.text(
-    `Proprietor: ${OFFICIAL_PROPRIETOR}  |  GSTIN: ${OFFICIAL_GSTIN}  |  SAC: ${OFFICIAL_SAC_CODE}`,
-    headerLeftX,
-    22
+    `GSTIN: ${OFFICIAL_GSTIN}   |   Proprietor: ${OFFICIAL_PROPRIETOR}`,
+    companyLeftX,
+    31.8
   );
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7.4);
+  pdf.setTextColor(71, 85, 105);
+  pdf.text(
+    `Regd. Address: ${OFFICIAL_REGISTERED_ADDRESS}`,
+    companyLeftX,
+    36.2
+  );
+  pdf.text(
+    `Phone / WhatsApp: ${OFFICIAL_HELPLINE}   |   Email: ${OFFICIAL_EMAIL}`,
+    companyLeftX,
+    40.4
+  );
+
+  // Right Header Card: GST TAX INVOICE Box (with Cream/Amber Header Band)
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(138, 16.5, 58, 27.5, 2, 2, 'FD');
+
+  pdf.setFillColor(254, 243, 199); // #fef3c7
+  pdf.setDrawColor(245, 158, 11);
+  pdf.roundedRect(138, 16.5, 58, 7, 2, 2, 'F');
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(8.2);
+  pdf.setTextColor(146, 64, 14);
+  pdf.text(
+    draft.includeGst ? 'GST TAX INVOICE' : 'OFFICIAL TRIP INVOICE',
+    167,
+    21.2,
+    { align: 'center' }
+  );
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9.2);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text(`Invoice No: ${draft.invoiceNumber}`, 141, 28);
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(7.6);
+  pdf.setTextColor(51, 65, 85);
+  pdf.text(`Invoice Date: ${draft.invoiceDate}`, 141, 32.5);
+  pdf.text(`Duty / Ref ID: ${draft.bookingId}`, 141, 36.8);
+  pdf.text(`SAC Code: ${OFFICIAL_SAC_CODE} (Cab Service)`, 141, 41);
+
+  // Subtle horizontal divider under header
+  pdf.setDrawColor(226, 232, 240);
+  pdf.line(14, 47.5, 196, 47.5);
+
+  // Two-Column Cards: BILLED TO (Left) & VEHICLE, CHAUFFEUR & JOURNEY SUMMARY (Right)
+  const cardTopY = 51;
+  const cardHeight = 35;
+
+  // Left Card
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(14, cardTopY, 89, cardHeight, 2, 2, 'FD');
+  pdf.setFillColor(241, 245, 249);
+  pdf.rect(14.2, cardTopY + 0.2, 88.6, 6.8, 'F');
+  pdf.line(14, cardTopY + 7, 103, cardTopY + 7);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.6);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text('BILLED TO (PASSENGER / CORPORATE DETAILS)', 17, cardTopY + 4.8);
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(9.8);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text((draft.customerName || 'Traveller').slice(0, 34), 17, cardTopY + 13);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8);
   pdf.setTextColor(51, 65, 85);
-  pdf.text(OFFICIAL_REGISTERED_ADDRESS, headerLeftX, 26.5);
-  pdf.text(
-    `Email: ${OFFICIAL_EMAIL}  |  Helpline / WhatsApp: ${OFFICIAL_HELPLINE}`,
-    headerLeftX,
-    31
-  );
-
-  // Right Side Invoice Meta
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(11);
-  pdf.setTextColor(15, 23, 42);
-  pdf.text(
-    draft.includeGst ? 'TAX INVOICE' : 'OFFICIAL TRIP RECEIPT',
-    196,
-    16,
-    { align: 'right' }
-  );
-
-  pdf.setFontSize(10);
-  pdf.text(draft.invoiceNumber, 196, 21.5, { align: 'right' });
-
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.5);
-  pdf.setTextColor(71, 85, 105);
-  pdf.text(`Booking ID: #${draft.bookingId}`, 196, 26.5, { align: 'right' });
-  pdf.text(`Invoice Date: ${draft.invoiceDate}`, 196, 31, { align: 'right' });
-
-  // Divider Line
-  pdf.setDrawColor(15, 23, 42);
-  pdf.setLineWidth(0.6);
-  pdf.line(14, 36, 196, 36);
-
-  // Customer & Trip Box Grid
-  pdf.setFillColor(248, 250, 252);
-  pdf.setDrawColor(203, 213, 225);
-  pdf.setLineWidth(0.3);
-  pdf.roundedRect(14, 40, 88, 34, 2, 2, 'FD');
-  pdf.roundedRect(108, 40, 88, 34, 2, 2, 'FD');
-
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(8.5);
-  pdf.setTextColor(15, 23, 42);
-  pdf.text('BILLED TO (CUSTOMER / CORPORATE):', 18, 46);
-  pdf.setFontSize(10);
-  pdf.text(draft.customerName.slice(0, 34), 18, 51.5);
-
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.2);
-  pdf.setTextColor(51, 65, 85);
+  pdf.text(`Mobile: ${draft.customerPhone}`, 17, cardTopY + 18.2);
   if (draft.billingCompanyName) {
-    pdf.text(draft.billingCompanyName.slice(0, 38), 18, 56);
+    pdf.text(
+      `Company: ${draft.billingCompanyName.slice(0, 34)}`,
+      17,
+      cardTopY + 23.2
+    );
   }
-  pdf.text(`Mobile: ${draft.customerPhone}`, 18, 61);
-  pdf.text(`Email: ${draft.customerEmail || OFFICIAL_EMAIL}`, 18, 65.5);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text(
-    `Customer GSTIN: ${draft.customerGstin || 'B2C / Unregistered'}`,
-    18,
-    70.5
-  );
+  if (draft.customerGstin) {
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(`Customer GSTIN: ${draft.customerGstin}`, 17, cardTopY + 28.2);
+  }
 
-  // Right Box: Journey & Chauffeur
+  // Right Card
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(107, cardTopY, 89, cardHeight, 2, 2, 'FD');
+  pdf.setFillColor(241, 245, 249);
+  pdf.rect(107.2, cardTopY + 0.2, 88.6, 6.8, 'F');
+  pdf.line(107, cardTopY + 7, 196, cardTopY + 7);
+
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(8.5);
+  pdf.setFontSize(7.6);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('JOURNEY & VEHICLE PARTICULARS:', 112, 46);
-  pdf.setFontSize(9.2);
-  pdf.text(
-    `${draft.pickupCity} to ${draft.dropCity}`.slice(0, 38),
-    112,
-    51.5
-  );
+  pdf.text('VEHICLE, CHAUFFEUR & JOURNEY SUMMARY', 110, cardTopY + 4.8);
 
-  pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8.2);
-  pdf.setTextColor(51, 65, 85);
-  pdf.text(
-    `Trip Type: ${draft.tripType} (${draft.distanceKm} KM / ${draft.tripDays}d)`,
-    112,
-    56.5
-  );
-  pdf.text(`Pickup: ${draft.pickupDate} at ${draft.pickupTime}`, 112, 61);
-  pdf.text(
-    `Vehicle: ${draft.vehicleCategory} (${draft.vehicleNumber})`,
-    112,
-    65.5
-  );
-  pdf.text(
-    `Chauffeur: ${draft.driverName} (${draft.driverPhone})`,
-    112,
-    70.5
-  );
-
-  // Itemized Fare Table Header
-  let y = 81;
-  pdf.setFillColor(15, 23, 42);
-  pdf.rect(14, y, 182, 8.5, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(8.5);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text('DESCRIPTION OF CAB SERVICE (SAC 996412)', 18, y + 5.6);
-  pdf.text('COMPUTATION / BASIS', 115, y + 5.6);
-  pdf.text('AMOUNT (INR)', 192, y + 5.6, { align: 'right' });
-
-  y += 8.5;
-
-  const drawRow = (
-    desc: string,
-    basis: string,
-    amountStr: string,
-    isBold = false,
-    bgRgb?: [number, number, number]
-  ) => {
-    if (bgRgb) {
-      pdf.setFillColor(bgRgb[0], bgRgb[1], bgRgb[2]);
-      pdf.rect(14, y, 182, 8, 'F');
-    }
-    pdf.setDrawColor(226, 232, 240);
-    pdf.line(14, y + 8, 196, y + 8);
-    pdf.setFont('helvetica', isBold ? 'bold' : 'normal');
-    pdf.setFontSize(8.8);
-    pdf.setTextColor(15, 23, 42);
-    pdf.text(desc, 18, y + 5.3);
-    pdf.text(basis, 115, y + 5.3);
-    pdf.text(amountStr, 192, y + 5.3, { align: 'right' });
-    y += 8;
-  };
-
-  drawRow(
-    `Base Trip Distance Fare (${draft.vehicleCategory})`,
-    `${draft.distanceKm} KM x Rs.${draft.perKmRate}/KM (${draft.tripDays} Day)`,
-    formatPdfCurrency(draft.baseFare),
-    true
-  );
-  drawRow(
-    'Chauffeur Daily Allowance (DA / Bata)',
-    `${draft.tripDays} Day(s)`,
-    formatPdfCurrency(draft.driverAllowance)
-  );
-  drawRow(
-    'Inter-State Border Permit & Toll Tax',
-    'State Permit Allocation',
-    formatPdfCurrency(draft.stateTax)
-  );
-  if (draft.nightCharges > 0) {
-    drawRow(
-      'Night Driving Allowance',
-      '10:00 PM - 06:00 AM',
-      formatPdfCurrency(draft.nightCharges)
-    );
-  }
-  if (draft.parkingTollExtra > 0) {
-    drawRow(
-      'Airport Parking / Extra Toll / Waiting Charges',
-      'Actuals',
-      formatPdfCurrency(draft.parkingTollExtra)
-    );
-  }
-  if (draft.marketDiscount > 0) {
-    drawRow(
-      'Less: SafarIndiaCabs Promotional Market Discount',
-      'Instant Rebate',
-      `- ${formatPdfCurrency(draft.marketDiscount)}`,
-      true,
-      [236, 253, 245]
-    );
-  }
-  drawRow(
-    'Net Taxable Value',
-    'Sub-Total Before Tax',
-    formatPdfCurrency(taxableAmount),
-    true,
-    [248, 250, 252]
-  );
-
-  if (draft.includeGst) {
-    drawRow(
-      `GST @ ${draft.gstPercentage}% (CGST 2.5%: Rs.${cgst} + SGST 2.5%: Rs.${sgst})`,
-      `SAC ${OFFICIAL_SAC_CODE}`,
-      formatPdfCurrency(gstAmount)
-    );
-  }
-
-  // Grand Total Bar
-  pdf.setFillColor(15, 23, 42);
-  pdf.rect(14, y, 182, 10, 'F');
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(10.5);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text('TOTAL FINAL INVOICE AMOUNT', 18, y + 6.5);
-  pdf.setFontSize(8.5);
-  pdf.setTextColor(251, 191, 36);
-  pdf.text(
-    `Advance Paid: Rs.${draft.advancePaid}  |  Balance Due: Rs.${balanceDue}`,
-    102,
-    y + 6.5
-  );
-  pdf.setFontSize(11);
-  pdf.setTextColor(255, 255, 255);
-  pdf.text(formatPdfCurrency(grandTotal), 192, y + 6.5, { align: 'right' });
-
-  y += 16;
-
-  // Left Side: Company Address, Terms & Settlement Notes
+  const vehicleDisplay = `Vehicle: ${draft.vehicleCategory} AC (${
+    draft.vehicleModel || 'Swift Dzire / Toyota Etios'
+  })`;
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(8.8);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('OFFICIAL COMPANY & SETTLEMENT DETAILS:', 14, y);
+  pdf.text(vehicleDisplay.slice(0, 44), 110, cardTopY + 12.6);
 
   pdf.setFont('helvetica', 'normal');
-  pdf.setFontSize(8);
+  pdf.setFontSize(7.8);
   pdf.setTextColor(51, 65, 85);
-  pdf.text(`Company Name: ${OFFICIAL_COMPANY_NAME}`, 14, y + 5);
-  pdf.text(`GSTIN: ${OFFICIAL_GSTIN}   |   SAC Code: ${OFFICIAL_SAC_CODE}`, 14, y + 9.5);
-  pdf.text(`Proprietor / Signatory: ${OFFICIAL_PROPRIETOR}`, 14, y + 14);
-  pdf.text(`Official Email: ${OFFICIAL_EMAIL}`, 14, y + 18.5);
-  pdf.text(`Helpline / WhatsApp: ${OFFICIAL_HELPLINE}`, 14, y + 23);
-  pdf.text(`Regd. Address: ${OFFICIAL_REGISTERED_ADDRESS}`, 14, y + 27.5);
-  pdf.text(`Admin Portal: ${OFFICIAL_ADMIN_PORTAL_URL}`, 14, y + 32);
+  pdf.text(
+    `Vehicle Reg. No: ${draft.vehicleNumber}   |   Duty: ${draft.tripType}`,
+    110,
+    cardTopY + 17.5
+  );
+  pdf.text(
+    `Chauffeur: ${draft.driverName} (${draft.driverPhone})`,
+    110,
+    cardTopY + 22.3
+  );
+  pdf.text(
+    `Travel Date: ${draft.pickupDate} at ${draft.pickupTime}`,
+    110,
+    cardTopY + 27.1
+  );
+  pdf.text(
+    `Total Distance: ${draft.distanceKm} KM   |   Duration: ${draft.tripDays} Day(s)`,
+    110,
+    cardTopY + 31.9
+  );
 
-  // Right Side: Rectangular Stamp & "Digitally signed by" Block (matching user's uploaded reference image)
+  // Full-Width Pickup & Drop Location Box
+  const locBoxY = 90;
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(248, 250, 252);
+  pdf.roundedRect(14, locBoxY, 182, 14, 2, 2, 'FD');
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.8);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text('PICKUP LOCATION:', 17, locBoxY + 5.3);
+  pdf.text('DROP LOCATION:', 17, locBoxY + 10.6);
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(8.2);
+  pdf.setTextColor(30, 41, 59);
+  pdf.text(draft.pickupCity, 48, locBoxY + 5.3);
+  pdf.text(draft.dropCity, 48, locBoxY + 10.6);
+
+  // 4-Column Itemized Service Table (S.NO | DESCRIPTION OF CAB / TRAVEL SERVICE | SAC CODE | AMOUNT (INR))
+  let y = 108;
+  const tableWidth = 182;
+
+  // Table Header Bar
+  pdf.setFillColor(241, 245, 249);
+  pdf.setDrawColor(203, 213, 225);
+  pdf.rect(14, y, tableWidth, 8, 'FD');
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.8);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text('S.NO', 17, y + 5.3);
+  pdf.text('DESCRIPTION OF CAB / TRAVEL SERVICE', 31, y + 5.3);
+  pdf.text('SAC CODE', 145, y + 5.3, { align: 'center' });
+  pdf.text('AMOUNT (INR)', 193, y + 5.3, { align: 'right' });
+  y += 8;
+
+  const drawServiceRow = (
+    sno: string,
+    desc: string,
+    sac: string,
+    amountStr: string,
+    options?: {
+      boldDesc?: boolean;
+      boldAmount?: boolean;
+      bgRgb?: [number, number, number];
+      textRgb?: [number, number, number];
+      rowHeight?: number;
+    }
+  ) => {
+    const h = options?.rowHeight ?? 8;
+    if (options?.bgRgb) {
+      pdf.setFillColor(options.bgRgb[0], options.bgRgb[1], options.bgRgb[2]);
+      pdf.rect(14, y, tableWidth, h, 'F');
+    }
+    pdf.setDrawColor(203, 213, 225);
+    pdf.rect(14, y, tableWidth, h, 'D');
+
+    const textColor = options?.textRgb ?? [15, 23, 42];
+    pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+
+    if (sno) {
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.text(sno, 18.5, y + 5.3);
+    }
+
+    pdf.setFont('helvetica', options?.boldDesc ? 'bold' : 'normal');
+    pdf.setFontSize(options?.boldDesc ? 8.5 : 8);
+    pdf.text(desc, 31, y + 5.3);
+
+    if (sac) {
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.text(sac, 145, y + 5.3, { align: 'center' });
+    }
+
+    pdf.setFont('helvetica', options?.boldAmount ? 'bold' : 'normal');
+    pdf.setFontSize(options?.boldAmount ? 8.6 : 8);
+    pdf.text(amountStr, 193, y + 5.3, { align: 'right' });
+
+    y += h;
+  };
+
+  // Row 1: Cab Hire / Trip Charges
+  const routeDesc = `Cab Hire / Trip Charges (${draft.tripType} — ${draft.pickupCity} to ${draft.dropCity})`.slice(
+    0,
+    68
+  );
+  drawServiceRow(
+    '1',
+    routeDesc,
+    OFFICIAL_SAC_CODE,
+    formatINRDecimal(tripHireCharges),
+    { boldAmount: true }
+  );
+
+  // Row 2: Highway Toll Tax & Inter-State Entry Permit Charges
+  drawServiceRow(
+    '2',
+    'Highway Toll Tax & Inter-State Entry Permit Charges',
+    OFFICIAL_SAC_CODE,
+    formatINRDecimal(tollAndPermitCharges),
+    { boldAmount: true }
+  );
+
+  // Taxable Service Value
+  drawServiceRow(
+    '',
+    'Taxable Service Value',
+    '',
+    formatINRDecimal(taxableAmount),
+    { boldDesc: true, boldAmount: true }
+  );
+
+  // CGST & SGST Rows
+  drawServiceRow(
+    '',
+    'CGST @ 2.5% (Central Goods & Services Tax)',
+    '',
+    formatINRDecimal(cgst)
+  );
+  drawServiceRow(
+    '',
+    'SGST @ 2.5% (State Goods & Services Tax)',
+    '',
+    formatINRDecimal(sgst)
+  );
+
+  // TOTAL INVOICE AMOUNT (Tinted blue-gray bar)
+  drawServiceRow(
+    '',
+    'TOTAL INVOICE AMOUNT',
+    '',
+    formatINRDecimal(grandTotal),
+    {
+      boldDesc: true,
+      boldAmount: true,
+      bgRgb: [239, 246, 255],
+      rowHeight: 8.5,
+    }
+  );
+
+  // Amount Settled (UPI / Cash / Online) — Light Green Bar
+  drawServiceRow(
+    '',
+    'Amount Settled (UPI / Cash / Online)',
+    '',
+    `${formatINRDecimal(settledAmount)} (${
+      isPaidInFull ? 'PAID IN FULL' : 'ADVANCE PAID'
+    })`,
+    {
+      boldDesc: true,
+      boldAmount: true,
+      bgRgb: [236, 253, 245],
+      textRgb: [4, 120, 87],
+    }
+  );
+
+  // Balance Payable
+  drawServiceRow(
+    '',
+    'Balance Payable',
+    '',
+    isPaidInFull
+      ? 'INR 0.00 (NIL - PAID IN FULL)'
+      : formatINRDecimal(balanceDue),
+    {
+      boldDesc: true,
+      boldAmount: true,
+    }
+  );
+
+  // Amount in Words Row
+  pdf.setFillColor(241, 245, 249);
+  pdf.setDrawColor(203, 213, 225);
+  pdf.rect(14, y, tableWidth, 8, 'FD');
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.9);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text(
+    `Amount in Words: ${numberToIndianWords(grandTotal)}`,
+    17,
+    y + 5.3
+  );
+  y += 12;
+
+  // Bottom 3-Column Footer Box (Matching uploaded invoice + Rectangular Stamp + Pre-filled Aman Mishra Signature)
+  const footerBoxY = y;
+  const footerBoxH = 54;
+  pdf.setDrawColor(203, 213, 225);
+  pdf.setFillColor(255, 255, 255);
+  pdf.roundedRect(14, footerBoxY, 182, footerBoxH, 2, 2, 'FD');
+
+  // Vertical column dividers inside footer box
+  const col1End = 82;
+  const col2End = 138;
+  pdf.line(col1End, footerBoxY, col1End, footerBoxY + footerBoxH);
+  pdf.line(col2End, footerBoxY, col2End, footerBoxY + footerBoxH);
+
+  // COLUMN 1: DECLARATION & TERMS
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.6);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text('DECLARATION & TERMS:', 17, footerBoxY + 6);
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(6.5);
+  pdf.setTextColor(71, 85, 105);
+  const termsLines = [
+    '1. Certified that the particulars given above are true and',
+    '   correct for corporate travel claim.',
+    '2. Regd. Office: H NO 143 STREET 4 JHARODA MAJRA',
+    '   NORTH DELHI BURARI 110084.',
+    `3. GSTIN: ${OFFICIAL_GSTIN} | SAC: ${OFFICIAL_SAC_CODE}.`,
+    '4. Subject to North Delhi Jurisdiction. E. & O.E.',
+    '5. Official Tax Invoice for Official / Personal Travel Claim',
+    '   & Company Reimbursement.',
+  ];
+  let termY = footerBoxY + 11;
+  termsLines.forEach((line) => {
+    pdf.text(line, 17, termY);
+    termY += 4.3;
+  });
+
+  // COLUMN 2: DIGITALLY SIGNED BY SAFARINDIACABS (AMAN MISHRA)
   const signTimestamp =
     draft.digitalSignatureTimestamp ||
     getFormattedDigitalSignTimestamp(draft.invoiceDate);
 
-  if (draft.includeMohurStamp) {
-    // Rectangular Official Company Stamp Box
-    pdf.setDrawColor(30, 58, 138);
-    pdf.setLineWidth(0.7);
-    pdf.rect(118, y - 2, 78, 16);
-    pdf.setLineWidth(0.25);
-    pdf.rect(119.2, y - 0.8, 75.6, 13.6);
+  if (draft.includeDigitalSign) {
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7.4);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(
+      `Digitally signed by ${OFFICIAL_LEGAL_NAME}`,
+      col1End + 3.5,
+      footerBoxY + 10
+    );
+    pdf.text(
+      `(${(draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR).toUpperCase()})`,
+      col1End + 3.5,
+      footerBoxY + 15.2
+    );
+    pdf.text(`GSTIN: ${OFFICIAL_GSTIN}`, col1End + 3.5, footerBoxY + 20.4);
+    pdf.text(`Date: ${signTimestamp}`, col1End + 3.5, footerBoxY + 25.6);
+    pdf.text(`Location: IN (North Delhi)`, col1End + 3.5, footerBoxY + 30.8);
 
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(8.5);
+    pdf.setFontSize(6.6);
+    pdf.setTextColor(4, 120, 87);
+    pdf.text(
+      '•  D i g i t a l l y   V e r i f i e d   T a x   I n v o i c e',
+      col1End + 3.5,
+      footerBoxY + 46
+    );
+  }
+
+  // COLUMN 3: For SAFARINDIACABS + RECTANGULAR STAMP + PRE-FILLED AMAN MISHRA SIGNATURE
+  const col3CenterX = (col2End + 196) / 2;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.8);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text(`For ${OFFICIAL_LEGAL_NAME}`, col3CenterX, footerBoxY + 6, {
+    align: 'center',
+  });
+
+  if (draft.includeMohurStamp) {
+    // Rectangular Official Rubber Stamp Box in Royal Blue (#1e3a8a)
+    const stampX = col2End + 4.5;
+    const stampY = footerBoxY + 9.5;
+    const stampW = 49;
+    const stampH = 26;
+
+    pdf.setDrawColor(30, 58, 138);
+    pdf.setLineWidth(0.65);
+    pdf.rect(stampX, stampY, stampW, stampH);
+    pdf.setLineWidth(0.25);
+    pdf.rect(stampX + 1.1, stampY + 1.1, stampW - 2.2, stampH - 2.2);
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(6.8);
     pdf.setTextColor(30, 58, 138);
-    pdf.text('FOR SAFAR INDIA CABS (INDIA)', 157, y + 3.5, {
+    pdf.text('SAFARINDIACABS • NORTH DELHI', col3CenterX, stampY + 5, {
       align: 'center',
     });
-    pdf.setFontSize(7.5);
-    pdf.text(`GSTIN: ${OFFICIAL_GSTIN} • NORTH DELHI`, 157, y + 7.8, {
+
+    pdf.setFontSize(5.8);
+    pdf.text(`GSTIN: ${OFFICIAL_GSTIN}`, col3CenterX, stampY + 8.8, {
       align: 'center',
     });
-    pdf.text(
-      `PROPRIETOR / AUTHORIZED SIGNATORY: ${(
-        draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR
-      ).toUpperCase()}`,
-      157,
-      11.6 + y,
-      { align: 'center' }
-    );
+
+    pdf.setDrawColor(30, 58, 138);
+    pdf.setLineWidth(0.2);
+    pdf.line(stampX + 3, stampY + 10.3, stampX + stampW - 3, stampY + 10.3);
+
+    pdf.setFontSize(5.4);
+    pdf.text('OFFICIAL VERIFIED TAX SEAL', col3CenterX, stampY + 23.5, {
+      align: 'center',
+    });
   }
 
-  if (draft.includeDigitalSign) {
-    const digY = draft.includeMohurStamp ? y + 17 : y;
-    pdf.setDrawColor(148, 163, 184);
-    pdf.setFillColor(250, 250, 250);
-    pdf.setLineWidth(0.35);
-    pdf.rect(118, digY, 78, 22, 'FD');
-
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(15, 23, 42);
-    pdf.text(`Digitally signed by ${OFFICIAL_LEGAL_NAME}`, 120.5, digY + 5);
-    pdf.text(
-      `(${(draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR).toUpperCase()} - PROPRIETOR)`,
-      120.5,
-      digY + 9.3
-    );
-    pdf.text(`GSTIN: ${OFFICIAL_GSTIN}`, 120.5, digY + 13.6);
-    pdf.text(`Date: ${signTimestamp}`, 120.5, digY + 17.6);
-    pdf.text(`Location: IN`, 120.5, digY + 21);
+  // Pre-filled Handwritten Signature of Aman Mishra (`/assets/aistudio/IMG-20260726-WA0012_a92b8f1b.jpg`)
+  const cleanSignDataUrl = await loadCleanSignaturePngDataUrl(
+    OFFICIAL_SIGNATURE_URL
+  );
+  if (cleanSignDataUrl) {
+    try {
+      pdf.addImage(
+        cleanSignDataUrl,
+        'PNG',
+        col2End + 6.5,
+        footerBoxY + 17.5,
+        45,
+        15
+      );
+    } catch {
+      // ignore signature embed error
+    }
   }
+
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(7.8);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text(
+    `Prop. ${draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}`,
+    col3CenterX,
+    footerBoxY + 43.5,
+    { align: 'center' }
+  );
+
+  pdf.setFont('helvetica', 'normal');
+  pdf.setFontSize(6.8);
+  pdf.setTextColor(100, 116, 139);
+  pdf.text('Authorised Signatory & Seal', col3CenterX, footerBoxY + 48, {
+    align: 'center',
+  });
 
   const cleanFileName = `${draft.invoiceNumber.replace(/[^a-zA-Z0-9_-]/g, '_')}_${draft.bookingId}_SafarIndiaCabs.pdf`;
   return { pdf, fileName: cleanFileName };
@@ -1165,29 +1439,30 @@ export async function shareBillPdfOnWhatsApp(
   const pdfBlob = pdf.output('blob');
   const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-  // Also trigger background Meta WhatsApp Cloud API notification
-  const taxableAmount = Math.max(
+  const tripHireCharges = Math.max(
     0,
     Number(draft.baseFare) +
       Number(draft.driverAllowance) +
-      Number(draft.stateTax) +
-      Number(draft.nightCharges) +
-      Number(draft.parkingTollExtra) -
+      Number(draft.nightCharges) -
       Number(draft.marketDiscount)
   );
+  const tollAndPermitCharges = Math.max(
+    0,
+    Number(draft.stateTax) + Number(draft.parkingTollExtra)
+  );
+  const taxableAmount = tripHireCharges + tollAndPermitCharges;
   const gstAmount = draft.includeGst
     ? Math.round(taxableAmount * (Number(draft.gstPercentage) / 100))
     : 0;
   const grandTotal = taxableAmount + gstAmount;
   const balanceDue = Math.max(0, grandTotal - Number(draft.advancePaid));
 
-  const captionText = `*${OFFICIAL_COMPANY_NAME} — Official GST Tax Invoice PDF*\nInvoice No: *${draft.invoiceNumber}*\nBooking ID: *#${draft.bookingId}*\nGSTIN: *${OFFICIAL_GSTIN}*\nCustomer: *${draft.customerName}*\nRoute: ${draft.pickupCity} → ${draft.dropCity}\nGrand Total: *${formatINR(grandTotal)}* (Advance Paid: ${formatINR(draft.advancePaid)}, Balance: ${formatINR(balanceDue)})\nDigitally Signed by: *${draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}*`;
+  const captionText = `*${OFFICIAL_LEGAL_NAME} — Official GST Tax Invoice PDF*\nInvoice No: *${draft.invoiceNumber}*\nDuty / Ref ID: *${draft.bookingId}*\nGSTIN: *${OFFICIAL_GSTIN}*\nCustomer: *${draft.customerName}*\nRoute: ${draft.pickupCity} → ${draft.dropCity}\nTotal Invoice Amount: *${formatINRDecimal(grandTotal)}* (Settled: ${formatINRDecimal(draft.advancePaid)}, Balance: ${formatINRDecimal(balanceDue)})\nAuthorised Signatory: *Prop. ${draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}*`;
 
   sendWhatsAppCloudTextMessage(draft.customerPhone, captionText).catch(() => {
     // non-blocking
   });
 
-  // 1. If device browser supports sharing actual PDF files (Android / iOS Chrome Web Share Level 2)
   if (
     typeof navigator !== 'undefined' &&
     navigator.canShare &&
@@ -1196,16 +1471,15 @@ export async function shareBillPdfOnWhatsApp(
     try {
       await navigator.share({
         files: [pdfFile],
-        title: `${draft.invoiceNumber} - ${OFFICIAL_COMPANY_NAME}`,
+        title: `${draft.invoiceNumber} - ${OFFICIAL_LEGAL_NAME}`,
         text: captionText,
       });
       return { sharedViaNativeFile: true, fileName };
     } catch {
-      // If user cancels native share sheet or falls back, save the PDF file locally
+      // Fall through to direct PDF file download
     }
   }
 
-  // 2. Always download the real .pdf file so the admin has the exact PDF file ready
   pdf.save(fileName);
   return { sharedViaNativeFile: false, fileName };
 }

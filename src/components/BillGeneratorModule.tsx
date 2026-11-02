@@ -4,24 +4,27 @@ import {
   CustomBillDraft,
   TripType,
   VehicleCategory,
-  formatINR,
+  formatINRDecimal,
+  numberToIndianWords,
   OFFICIAL_COMPANY_NAME,
   OFFICIAL_LEGAL_NAME,
+  OFFICIAL_SUBTITLE,
   OFFICIAL_GSTIN,
   OFFICIAL_SAC_CODE,
   OFFICIAL_PROPRIETOR,
   OFFICIAL_EMAIL,
   OFFICIAL_HELPLINE,
   OFFICIAL_REGISTERED_ADDRESS,
-  OFFICIAL_ADMIN_PORTAL_URL,
   OFFICIAL_LOGO_URL,
   OFFICIAL_BANNER_URL,
+  OFFICIAL_SIGNATURE_URL,
 } from '../types/safar';
 import {
   bookingToStandardBillDraft,
   downloadBillAsPdf,
   shareBillPdfOnWhatsApp,
   getFormattedDigitalSignTimestamp,
+  loadCleanSignaturePngDataUrl,
 } from '../lib/pdfAndApis';
 import {
   Printer,
@@ -41,42 +44,42 @@ interface BillGeneratorModuleProps {
 }
 
 const DEFAULT_CUSTOM_BILL: CustomBillDraft = {
-  invoiceNumber: 'INV-SIC-2026-2601',
-  bookingId: 'SIC2601',
+  invoiceNumber: 'SIC-2026-5442',
+  bookingId: 'SIC-5442',
   invoiceDate: new Date().toISOString().slice(0, 10),
-  customerName: 'Rajeshwari Sharma',
-  customerPhone: '+91 98114 27650',
-  customerEmail: 'rajeshwari.sharma@indiacorp.in',
-  customerGstin: '07AABCI9281K1Z2',
-  billingCompanyName: 'IndiaCorp Solutions Pvt. Ltd.',
+  customerName: 'Rohit kumar',
+  customerPhone: '+91 9990710871',
+  customerEmail: OFFICIAL_EMAIL,
+  customerGstin: '',
+  billingCompanyName: '',
   tripType: 'Round Trip Outstation',
-  pickupCity: 'Connaught Place, New Delhi',
-  dropCity: 'Tajganj, Agra (UP)',
+  pickupCity: 'Nathupura Burari 110084',
+  dropCity: 'Dera Bassi Punjab',
   pickupDate: new Date().toISOString().slice(0, 10),
-  pickupTime: '06:00 AM',
+  pickupTime: '08:30 AM',
   vehicleCategory: 'Sedan',
-  vehicleModel: 'Maruti Swift Dzire Tour S',
-  vehicleNumber: 'DL 01 CAB 6812',
-  driverName: 'Rajendra Prasad Verma',
-  driverPhone: '+91 98182 74105',
+  vehicleModel: 'Swift Dzire / Toyota Etios',
+  vehicleNumber: 'HR55BE6324',
+  driverName: 'NITISH KUMAR',
+  driverPhone: '+91 9818944089',
   distanceKm: 460,
-  tripDays: 2,
-  perKmRate: 13,
-  baseFare: 5980,
-  driverAllowance: 700,
-  stateTax: 550,
+  tripDays: 1,
+  perKmRate: 14,
+  baseFare: 6426,
+  driverAllowance: 0,
+  stateTax: 1060,
   nightCharges: 0,
   parkingTollExtra: 0,
-  marketDiscount: 200,
+  marketDiscount: 0,
   includeGst: true,
   gstPercentage: 5,
-  advancePaid: 1586,
-  paymentMode: '20% Advance',
+  advancePaid: 7860,
+  paymentMode: 'Full Paid',
   includeMohurStamp: true,
   includeDigitalSign: true,
   authorizedSignatoryName: OFFICIAL_PROPRIETOR,
   digitalSignatureTimestamp: getFormattedDigitalSignTimestamp(),
-  notes: `Registered Office: ${OFFICIAL_REGISTERED_ADDRESS}. Helpline: ${OFFICIAL_HELPLINE}. Subject to Delhi Jurisdiction.`,
+  notes: `Registered Office: ${OFFICIAL_REGISTERED_ADDRESS}. Helpline: ${OFFICIAL_HELPLINE}. Subject to North Delhi Jurisdiction.`,
 };
 
 export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
@@ -94,6 +97,17 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
   const [showBannerInBill, setShowBannerInBill] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [sharingPdfWa, setSharingPdfWa] = useState(false);
+  const [cleanSignUrl, setCleanSignUrl] = useState<string>(OFFICIAL_SIGNATURE_URL);
+
+  useEffect(() => {
+    let mounted = true;
+    loadCleanSignaturePngDataUrl(OFFICIAL_SIGNATURE_URL).then((url) => {
+      if (mounted && url) setCleanSignUrl(url);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialBooking) {
@@ -121,22 +135,30 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
     });
   };
 
-  const taxableAmount = Math.max(
+  const tripHireCharges = Math.max(
     0,
     Number(draft.baseFare) +
       Number(draft.driverAllowance) +
-      Number(draft.stateTax) +
-      Number(draft.nightCharges) +
-      Number(draft.parkingTollExtra) -
+      Number(draft.nightCharges) -
       Number(draft.marketDiscount)
   );
+  const tollAndPermitCharges = Math.max(
+    0,
+    Number(draft.stateTax) + Number(draft.parkingTollExtra)
+  );
+  const taxableAmount = tripHireCharges + tollAndPermitCharges;
   const gstAmount = draft.includeGst
     ? Math.round(taxableAmount * (Number(draft.gstPercentage) / 100))
     : 0;
   const cgst = Math.round(gstAmount / 2);
   const sgst = gstAmount - cgst;
   const grandTotal = taxableAmount + gstAmount;
-  const balanceDue = Math.max(0, grandTotal - Number(draft.advancePaid));
+  const settledAmount = Math.min(
+    grandTotal,
+    Math.max(0, Number(draft.advancePaid))
+  );
+  const balanceDue = Math.max(0, grandTotal - settledAmount);
+  const isPaidInFull = balanceDue === 0;
 
   const digitalSignTimestamp =
     draft.digitalSignatureTimestamp ||
@@ -183,10 +205,10 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900 dark:text-slate-100 font-display">
-            Bill Generator (Rectangular Stamp & Digitally Signed PDF)
+            Bill Generator (Rectangular Stamp & Pre-Filled Aman Mishra Signature)
           </h1>
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Official {OFFICIAL_COMPANY_NAME} Tax Invoices · Proprietor:{' '}
+            Official {OFFICIAL_COMPANY_NAME} GST Tax Invoices · Proprietor:{' '}
             <strong>{OFFICIAL_PROPRIETOR}</strong> · GSTIN:{' '}
             <strong>{OFFICIAL_GSTIN}</strong> · SAC:{' '}
             <strong>{OFFICIAL_SAC_CODE}</strong>
@@ -241,7 +263,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
               htmlFor="select-booking-prefill"
               className="block text-xs font-extrabold text-slate-900 dark:text-slate-100"
             >
-              Load Details from Existing Booking (or Edit Custom Below)
+              Load Details from Live Customer Booking (or Edit Custom Below)
             </label>
             <div className="flex items-center gap-2">
               <select
@@ -249,7 +271,9 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
                 value={draft.bookingId}
                 onChange={(e) => {
                   const found = bookings.find(
-                    (b) => b.bookingId === e.target.value
+                    (b) =>
+                      b.bookingId === e.target.value ||
+                      `SIC-${b.bookingId.replace(/\D/g, '')}` === e.target.value
                   );
                   if (found) {
                     setDraft(bookingToStandardBillDraft(found));
@@ -260,28 +284,37 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
                 }}
                 className="flex-1 px-3 py-2 text-xs font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
               >
-                {bookings.map((b) => (
-                  <option key={b.bookingId} value={b.bookingId}>
-                    {b.bookingId} — {b.customerName} ({b.pickupCity} →{' '}
-                    {b.dropCity})
+                {bookings.length === 0 ? (
+                  <option value={draft.bookingId}>
+                    Custom Invoice Mode ({draft.invoiceNumber})
                   </option>
-                ))}
+                ) : (
+                  bookings.map((b) => (
+                    <option
+                      key={b.bookingId}
+                      value={`SIC-${b.bookingId.replace(/\D/g, '')}`}
+                    >
+                      {b.bookingId} — {b.customerName} ({b.pickupCity} →{' '}
+                      {b.dropCity})
+                    </option>
+                  ))
+                )}
               </select>
               <button
                 type="button"
                 onClick={() => {
-                  const randomNum = Math.floor(2700 + Math.random() * 900);
+                  const randomNum = Math.floor(5400 + Math.random() * 900);
                   setDraft({
                     ...DEFAULT_CUSTOM_BILL,
-                    bookingId: `SIC${randomNum}`,
-                    invoiceNumber: `INV-SIC-2026-${randomNum}`,
+                    bookingId: `SIC-${randomNum}`,
+                    invoiceNumber: `SIC-2026-${randomNum}`,
                     digitalSignatureTimestamp: getFormattedDigitalSignTimestamp(),
                   });
                 }}
                 className="px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl inline-flex items-center gap-1 cursor-pointer shrink-0"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>Blank Bill</span>
+                <span>New Bill</span>
               </button>
             </div>
           </div>
@@ -289,7 +322,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
           {/* Rectangular Stamp & Digital Sign Controls */}
           <div className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-800">
             <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
-              Rectangular Stamp & &quot;Digitally Signed&quot; Format Controls
+              Rectangular Stamp & Pre-Filled Signature Controls
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
@@ -432,7 +465,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Pickup City
+                Pickup Location
               </label>
               <input
                 type="text"
@@ -443,7 +476,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Drop City
+                Drop Location
               </label>
               <input
                 type="text"
@@ -493,7 +526,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Vehicle Number
+                Vehicle Reg. Number
               </label>
               <input
                 type="text"
@@ -506,7 +539,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Driver Name
+                Chauffeur Name
               </label>
               <input
                 type="text"
@@ -547,7 +580,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Base Fare (₹)
+                Cab Hire / Base (₹)
               </label>
               <input
                 type="number"
@@ -573,7 +606,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                State Tax/Toll (₹)
+                Toll & Permit (₹)
               </label>
               <input
                 type="number"
@@ -612,7 +645,7 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Advance Paid (₹)
+                Amount Settled (₹)
               </label>
               <input
                 type="number"
@@ -639,10 +672,16 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
           </div>
         </div>
 
-        {/* Right Live Branded Invoice Paper Preview */}
-        <div className="lg:col-span-7 bg-white border-2 border-slate-300 rounded-2xl shadow-md overflow-hidden text-slate-900">
+        {/* Right Live Branded Invoice Paper Preview (EXACT FORMAT MATCHING UPLOADED BILL) */}
+        <div className="lg:col-span-7 bg-white border-2 border-slate-300 rounded-xl shadow-md overflow-hidden text-slate-900">
+          {/* Top Dual-Tone Bar: Left 68% Dark Slate/Navy, Right 32% Warm Amber/Gold */}
+          <div className="flex w-full h-2.5">
+            <div className="w-[68%] bg-slate-900" />
+            <div className="w-[32%] bg-amber-600" />
+          </div>
+
           {showBannerInBill && (
-            <div className="w-full h-36 overflow-hidden border-b border-slate-200">
+            <div className="w-full h-32 overflow-hidden border-b border-slate-200">
               <img
                 src={OFFICIAL_BANNER_URL}
                 alt="Safar India Cabs Banner"
@@ -651,270 +690,339 @@ export const BillGeneratorModule: React.FC<BillGeneratorModuleProps> = ({
             </div>
           )}
 
-          <div className="p-6 sm:p-8 space-y-6">
-            {/* Invoice Top Header with Official Company Details */}
-            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-5 border-b-2 border-slate-900">
-              <div className="flex items-start gap-4">
+          <div className="p-5 sm:p-7 space-y-4">
+            {/* Header Section: Left Logo + Company Details | Right GST TAX INVOICE Card */}
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-slate-200">
+              <div className="flex items-start gap-3.5">
                 <img
                   src={OFFICIAL_LOGO_URL}
                   alt="SafarIndiaCabs Official Logo"
-                  className="w-20 h-20 object-contain rounded-xl border border-slate-200 p-1 bg-white shrink-0"
+                  className="w-20 h-20 object-contain rounded-xl border border-slate-300 p-1 bg-white shrink-0"
                 />
                 <div className="space-y-0.5">
-                  <div className="text-xl font-extrabold text-slate-900 font-display tracking-tight">
-                    {OFFICIAL_COMPANY_NAME}
+                  <div className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight font-display">
+                    {OFFICIAL_LEGAL_NAME}
                   </div>
-                  <div className="text-xs font-extrabold text-amber-700">
-                    Proprietor / Signatory: {OFFICIAL_PROPRIETOR} · GSTIN:{' '}
-                    {OFFICIAL_GSTIN} · SAC: {OFFICIAL_SAC_CODE}
+                  <div className="text-[10px] sm:text-[11px] font-extrabold text-amber-700 tracking-wide uppercase">
+                    {OFFICIAL_SUBTITLE}
                   </div>
-                  <div className="text-[11px] font-semibold text-slate-700">
+                  <div className="text-xs font-extrabold text-slate-900 pt-0.5">
+                    GSTIN: {OFFICIAL_GSTIN} &nbsp;|&nbsp; Proprietor:{' '}
+                    {OFFICIAL_PROPRIETOR}
+                  </div>
+                  <div className="text-[11px] text-slate-600">
                     Regd. Address: {OFFICIAL_REGISTERED_ADDRESS}
                   </div>
-                  <div className="text-[11px] font-mono text-slate-600">
-                    Email: {OFFICIAL_EMAIL} · Helpline / WhatsApp:{' '}
-                    {OFFICIAL_HELPLINE}
+                  <div className="text-[11px] text-slate-600">
+                    Phone / WhatsApp: {OFFICIAL_HELPLINE} &nbsp;|&nbsp; Email:{' '}
+                    {OFFICIAL_EMAIL}
                   </div>
                 </div>
               </div>
 
-              <div className="sm:text-right shrink-0">
-                <div className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
-                  {draft.includeGst
-                    ? 'TAX INVOICE'
-                    : 'OFFICIAL TRIP RECEIPT'}
+              {/* Right GST TAX INVOICE Card */}
+              <div className="sm:w-64 shrink-0 rounded-xl border border-slate-300 overflow-hidden bg-white">
+                <div className="bg-amber-100/90 border-b border-amber-300 py-1.5 px-3 text-center text-xs font-extrabold text-amber-900 uppercase tracking-wider">
+                  {draft.includeGst ? 'GST TAX INVOICE' : 'OFFICIAL TRIP INVOICE'}
                 </div>
-                <div className="text-lg font-extrabold font-mono text-slate-900 mt-0.5">
-                  {draft.invoiceNumber}
-                </div>
-                <div className="text-xs font-mono font-bold text-slate-700 mt-0.5">
-                  Booking ID: #{draft.bookingId}
-                </div>
-                <div className="text-xs font-mono text-slate-500">
-                  Date: {draft.invoiceDate}
-                </div>
-              </div>
-            </div>
-
-            {/* Customer & Journey Details Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
-                  Billed To (Traveller / Corporate)
-                </div>
-                <div className="text-sm font-extrabold text-slate-900">
-                  {draft.customerName}
-                </div>
-                {draft.billingCompanyName && (
-                  <div className="font-bold text-slate-700">
-                    {draft.billingCompanyName}
+                <div className="p-3 space-y-1 text-xs">
+                  <div className="font-extrabold text-slate-900 text-sm">
+                    Invoice No: {draft.invoiceNumber}
                   </div>
-                )}
-                <div className="font-mono font-semibold text-slate-700">
-                  Mobile: {draft.customerPhone}
-                </div>
-                {draft.customerEmail && (
-                  <div className="text-slate-600">{draft.customerEmail}</div>
-                )}
-                <div className="font-mono text-slate-900 pt-1">
-                  Customer GSTIN:{' '}
-                  <strong>{draft.customerGstin || 'B2C / Unregistered'}</strong>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
-                  Journey & Vehicle Particulars
-                </div>
-                <div className="text-sm font-extrabold text-slate-900">
-                  {draft.pickupCity} → {draft.dropCity}
-                </div>
-                <div className="font-semibold text-slate-700">
-                  {draft.tripType} · {draft.pickupDate} ({draft.pickupTime})
-                </div>
-                <div className="font-mono font-bold text-slate-800">
-                  Cab: {draft.vehicleCategory} ({draft.vehicleNumber})
-                </div>
-                <div className="font-mono text-slate-700">
-                  Chauffeur: {draft.driverName} ({draft.driverPhone})
+                  <div className="text-slate-700">
+                    Invoice Date: {draft.invoiceDate}
+                  </div>
+                  <div className="text-slate-700">
+                    Duty / Ref ID: {draft.bookingId}
+                  </div>
+                  <div className="text-slate-700">
+                    SAC Code: {OFFICIAL_SAC_CODE} (Cab Service)
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Fare Table */}
+            {/* Two-Column Summary Cards: BILLED TO & VEHICLE, CHAUFFEUR & JOURNEY SUMMARY */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="rounded-xl border border-slate-300 overflow-hidden bg-white">
+                <div className="bg-slate-100 border-b border-slate-300 px-3.5 py-2 font-extrabold text-slate-900 uppercase text-[11px] tracking-wide">
+                  BILLED TO (PASSENGER / CORPORATE DETAILS)
+                </div>
+                <div className="p-3.5 space-y-1">
+                  <div className="text-sm font-extrabold text-slate-900">
+                    {draft.customerName}
+                  </div>
+                  <div className="text-slate-700">
+                    Mobile: {draft.customerPhone}
+                  </div>
+                  {draft.billingCompanyName && (
+                    <div className="font-semibold text-slate-800">
+                      Company: {draft.billingCompanyName}
+                    </div>
+                  )}
+                  {draft.customerGstin && (
+                    <div className="font-mono font-bold text-slate-900">
+                      Customer GSTIN: {draft.customerGstin}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-300 overflow-hidden bg-white">
+                <div className="bg-slate-100 border-b border-slate-300 px-3.5 py-2 font-extrabold text-slate-900 uppercase text-[11px] tracking-wide">
+                  VEHICLE, CHAUFFEUR & JOURNEY SUMMARY
+                </div>
+                <div className="p-3.5 space-y-1">
+                  <div className="font-extrabold text-slate-900 text-xs sm:text-[13px]">
+                    Vehicle: {draft.vehicleCategory} AC (
+                    {draft.vehicleModel || 'Swift Dzire / Toyota Etios'})
+                  </div>
+                  <div className="text-slate-700">
+                    Vehicle Reg. No: {draft.vehicleNumber} &nbsp;|&nbsp; Duty:{' '}
+                    {draft.tripType}
+                  </div>
+                  <div className="text-slate-700">
+                    Chauffeur: {draft.driverName} ({draft.driverPhone})
+                  </div>
+                  <div className="text-slate-700">
+                    Travel Date: {draft.pickupDate} at {draft.pickupTime}
+                  </div>
+                  <div className="text-slate-700">
+                    Total Distance: {draft.distanceKm} KM &nbsp;|&nbsp;
+                    Duration: {draft.tripDays} Day(s)
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Pickup & Drop Location Full-Width Box */}
+            <div className="rounded-xl border border-slate-300 bg-slate-50/80 px-4 py-2.5 text-xs space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-extrabold text-slate-900 w-36 shrink-0">
+                  PICKUP LOCATION:
+                </span>
+                <span className="text-slate-800">{draft.pickupCity}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-extrabold text-slate-900 w-36 shrink-0">
+                  DROP LOCATION:
+                </span>
+                <span className="text-slate-800">{draft.dropCity}</span>
+              </div>
+            </div>
+
+            {/* 4-Column Itemized Service Table */}
             <div className="border border-slate-300 rounded-xl overflow-hidden">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-900 text-white">
-                    <th className="py-2.5 px-4 text-left font-extrabold">
-                      Description of Cab Service (SAC {OFFICIAL_SAC_CODE})
+                  <tr className="bg-slate-100 text-slate-900 border-b border-slate-300">
+                    <th className="py-2.5 px-3 text-left font-extrabold w-12">
+                      S.NO
                     </th>
-                    <th className="py-2.5 px-4 text-left font-extrabold">
-                      Rate / Basis
+                    <th className="py-2.5 px-3 text-left font-extrabold">
+                      DESCRIPTION OF CAB / TRAVEL SERVICE
                     </th>
-                    <th className="py-2.5 px-4 text-right font-extrabold">
-                      Amount (INR)
+                    <th className="py-2.5 px-3 text-center font-extrabold w-24">
+                      SAC CODE
+                    </th>
+                    <th className="py-2.5 px-3.5 text-right font-extrabold w-36">
+                      AMOUNT (INR)
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 text-slate-800">
+                <tbody className="divide-y divide-slate-200 text-slate-900">
                   <tr>
-                    <td className="py-2.5 px-4 font-bold">
-                      Base Trip Fare ({draft.vehicleCategory})
+                    <td className="py-2.5 px-3">1</td>
+                    <td className="py-2.5 px-3">
+                      Cab Hire / Trip Charges ({draft.tripType} —{' '}
+                      {draft.pickupCity} to {draft.dropCity})
                     </td>
-                    <td className="py-2.5 px-4 font-mono">
-                      {draft.distanceKm} KM × ₹{draft.perKmRate}/KM (
-                      {draft.tripDays}d)
+                    <td className="py-2.5 px-3 text-center font-mono">
+                      {OFFICIAL_SAC_CODE}
                     </td>
-                    <td className="py-2.5 px-4 text-right font-mono font-bold">
-                      {formatINR(draft.baseFare)}
+                    <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
+                      {formatINRDecimal(tripHireCharges)}
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-2.5 px-4">
-                      Driver Allowance (DA / Daily Bata)
+                    <td className="py-2.5 px-3">2</td>
+                    <td className="py-2.5 px-3">
+                      Highway Toll Tax & Inter-State Entry Permit Charges
                     </td>
-                    <td className="py-2.5 px-4 font-mono">
-                      {draft.tripDays} Day(s)
+                    <td className="py-2.5 px-3 text-center font-mono">
+                      {OFFICIAL_SAC_CODE}
                     </td>
-                    <td className="py-2.5 px-4 text-right font-mono">
-                      {formatINR(draft.driverAllowance)}
+                    <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
+                      {formatINRDecimal(tollAndPermitCharges)}
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-2.5 px-4">
-                      State Border Permit & Toll Tax
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3 font-extrabold">
+                      Taxable Service Value
                     </td>
-                    <td className="py-2.5 px-4">Inter-state permit</td>
-                    <td className="py-2.5 px-4 text-right font-mono">
-                      {formatINR(draft.stateTax)}
-                    </td>
-                  </tr>
-                  {draft.nightCharges > 0 && (
-                    <tr>
-                      <td className="py-2.5 px-4">Night Driving Allowance</td>
-                      <td className="py-2.5 px-4">10 PM – 6 AM</td>
-                      <td className="py-2.5 px-4 text-right font-mono">
-                        {formatINR(draft.nightCharges)}
-                      </td>
-                    </tr>
-                  )}
-                  {draft.parkingTollExtra > 0 && (
-                    <tr>
-                      <td className="py-2.5 px-4">
-                        Airport Parking / Extra Toll / Waiting
-                      </td>
-                      <td className="py-2.5 px-4">Actuals</td>
-                      <td className="py-2.5 px-4 text-right font-mono">
-                        {formatINR(draft.parkingTollExtra)}
-                      </td>
-                    </tr>
-                  )}
-                  {draft.marketDiscount > 0 && (
-                    <tr className="bg-emerald-50/80 text-emerald-900">
-                      <td className="py-2.5 px-4 font-bold">
-                        Less: SafarIndiaCabs Promotional Market Discount
-                      </td>
-                      <td className="py-2.5 px-4">Instant Rebate</td>
-                      <td className="py-2.5 px-4 text-right font-mono font-bold">
-                        - {formatINR(draft.marketDiscount)}
-                      </td>
-                    </tr>
-                  )}
-                  <tr className="bg-slate-50 font-bold">
-                    <td className="py-2.5 px-4">Net Taxable Value</td>
-                    <td className="py-2.5 px-4 font-mono">Sub-Total</td>
-                    <td className="py-2.5 px-4 text-right font-mono">
-                      {formatINR(taxableAmount)}
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
+                      {formatINRDecimal(taxableAmount)}
                     </td>
                   </tr>
                   {draft.includeGst && (
-                    <tr>
-                      <td className="py-2.5 px-4">
-                        GST @ {draft.gstPercentage}% (CGST: {formatINR(cgst)} +
-                        SGST: {formatINR(sgst)})
-                      </td>
-                      <td className="py-2.5 px-4 font-mono">
-                        SAC {OFFICIAL_SAC_CODE}
-                      </td>
-                      <td className="py-2.5 px-4 text-right font-mono">
-                        {formatINR(gstAmount)}
-                      </td>
-                    </tr>
+                    <>
+                      <tr>
+                        <td className="py-2 px-3" />
+                        <td className="py-2 px-3 text-slate-700">
+                          CGST @ 2.5% (Central Goods & Services Tax)
+                        </td>
+                        <td className="py-2 px-3" />
+                        <td className="py-2 px-3.5 text-right font-mono text-slate-800">
+                          {formatINRDecimal(cgst)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 px-3" />
+                        <td className="py-2 px-3 text-slate-700">
+                          SGST @ 2.5% (State Goods & Services Tax)
+                        </td>
+                        <td className="py-2 px-3" />
+                        <td className="py-2 px-3.5 text-right font-mono text-slate-800">
+                          {formatINRDecimal(sgst)}
+                        </td>
+                      </tr>
+                    </>
                   )}
-                  <tr className="bg-slate-900 text-white font-extrabold text-sm">
-                    <td className="py-3 px-4">TOTAL</td>
-                    <td className="py-3 px-4 text-xs font-semibold text-amber-300 font-mono">
-                      Adv: {formatINR(draft.advancePaid)} · Bal:{' '}
-                      {formatINR(balanceDue)}
+                  <tr className="bg-blue-50/70 font-extrabold text-slate-900">
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3 text-xs sm:text-sm">
+                      TOTAL INVOICE AMOUNT
                     </td>
-                    <td className="py-3 px-4 text-right font-mono text-amber-400 text-base">
-                      INR {Math.round(grandTotal).toLocaleString('en-IN')}.00
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3.5 text-right font-mono text-xs sm:text-sm">
+                      {formatINRDecimal(grandTotal)}
+                    </td>
+                  </tr>
+                  <tr className="bg-emerald-50/90 text-emerald-800 font-extrabold">
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3">
+                      Amount Settled (UPI / Cash / Online)
+                    </td>
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3.5 text-right font-mono">
+                      {formatINRDecimal(settledAmount)} (
+                      {isPaidInFull ? 'PAID IN FULL' : 'ADVANCE PAID'})
+                    </td>
+                  </tr>
+                  <tr className="font-extrabold text-slate-900">
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3">Balance Payable</td>
+                    <td className="py-2.5 px-3" />
+                    <td className="py-2.5 px-3.5 text-right font-mono">
+                      {isPaidInFull
+                        ? 'INR 0.00 (NIL - PAID IN FULL)'
+                        : formatINRDecimal(balanceDue)}
                     </td>
                   </tr>
                 </tbody>
               </table>
+              <div className="bg-slate-100 border-t border-slate-300 px-3.5 py-2 text-xs font-extrabold text-slate-900">
+                Amount in Words: {numberToIndianWords(grandTotal)}
+              </div>
             </div>
 
-            {/* Footer: Left Company Details & Right Rectangular Stamp + Digitally Signed Block */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between gap-6 pt-4 border-t-2 border-slate-200">
-              <div className="space-y-1 text-xs text-slate-700 max-w-sm">
-                <div className="font-extrabold text-slate-900 uppercase tracking-wider text-[11px]">
-                  Official Company & Registered Office Details:
+            {/* Bottom 3-Column Footer Box (Declaration & Terms | Digital Signature | Rectangular Stamp + Pre-Filled Aman Mishra Signature) */}
+            <div className="rounded-xl border border-slate-300 grid grid-cols-1 sm:grid-cols-12 divide-y sm:divide-y-0 sm:divide-x divide-slate-300 overflow-hidden bg-white text-xs">
+              {/* Column 1: Declaration & Terms */}
+              <div className="sm:col-span-5 p-3.5 space-y-1 text-[10.5px] leading-snug text-slate-700">
+                <div className="font-extrabold text-slate-900 uppercase text-xs mb-1">
+                  DECLARATION & TERMS:
                 </div>
-                <div className="font-bold text-slate-900">
-                  {OFFICIAL_COMPANY_NAME} (Proprietor: {OFFICIAL_PROPRIETOR})
+                <div>
+                  1. Certified that the particulars given above are true and
+                  correct for corporate travel claim.
                 </div>
-                <div className="font-mono text-[11px] font-bold text-slate-800">
-                  GSTIN: {OFFICIAL_GSTIN} · SAC Code: {OFFICIAL_SAC_CODE}
+                <div>
+                  2. Regd. Office: {OFFICIAL_REGISTERED_ADDRESS}.
                 </div>
-                <div className="text-[11px] leading-snug text-slate-700">
-                  <strong>Address:</strong> {OFFICIAL_REGISTERED_ADDRESS}
+                <div>
+                  3. GSTIN: {OFFICIAL_GSTIN} | SAC: {OFFICIAL_SAC_CODE}.
                 </div>
-                <div className="text-[11px] font-mono text-slate-600">
-                  Email: {OFFICIAL_EMAIL} · Helpline: {OFFICIAL_HELPLINE}
-                </div>
-                <div className="text-[11px] font-mono text-slate-500">
-                  Portal: {OFFICIAL_ADMIN_PORTAL_URL}
+                <div>4. Subject to North Delhi Jurisdiction. E. & O.E.</div>
+                <div>
+                  5. Official Tax Invoice for Official / Personal Travel Claim
+                  & Company Reimbursement.
                 </div>
               </div>
 
-              {/* Rectangular Stamp & Rectangular "Digitally signed by" Block */}
-              <div className="flex flex-col items-end gap-3 self-end sm:self-auto w-full sm:w-auto">
-                {draft.includeMohurStamp && (
-                  <div className="border-2 border-blue-900 px-3.5 py-2 rounded-xs bg-blue-50/40 text-blue-950 text-center w-full sm:w-72">
-                    <div className="text-xs font-extrabold tracking-wider uppercase">
-                      FOR {OFFICIAL_LEGAL_NAME}
+              {/* Column 2: Digitally Signed Block */}
+              <div className="sm:col-span-3 p-3.5 flex flex-col justify-between text-[11px] leading-snug text-slate-800">
+                {draft.includeDigitalSign ? (
+                  <>
+                    <div className="space-y-1">
+                      <div className="font-semibold text-slate-900">
+                        Digitally signed by {OFFICIAL_LEGAL_NAME}
+                      </div>
+                      <div className="font-semibold text-slate-900">
+                        (
+                        {(
+                          draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR
+                        ).toUpperCase()}
+                        )
+                      </div>
+                      <div>GSTIN: {OFFICIAL_GSTIN}</div>
+                      <div>Date: {digitalSignTimestamp}</div>
+                      <div>Location: IN (North Delhi)</div>
                     </div>
-                    <div className="text-[10px] font-mono font-bold text-blue-900 mt-0.5">
-                      GSTIN: {OFFICIAL_GSTIN} • NORTH DELHI 110084
+                    <div className="pt-3 text-[10px] font-extrabold tracking-widest text-emerald-700 uppercase">
+                      • Digitally Verified Tax Invoice
                     </div>
-                    <div className="text-[11px] font-extrabold text-blue-950 mt-1 border-t border-blue-900/30 pt-0.5 uppercase">
-                      PROPRIETOR: {draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}
-                    </div>
+                  </>
+                ) : (
+                  <div className="text-slate-400 italic">
+                    Digital signature disabled
                   </div>
                 )}
+              </div>
 
-                {draft.includeDigitalSign && (
-                  <div className="border border-slate-400 bg-white px-4 py-3 text-left text-slate-900 w-full sm:w-72 shadow-2xs">
-                    <div className="text-[13px] leading-snug font-sans text-slate-900">
-                      Digitally signed by {OFFICIAL_LEGAL_NAME}
+              {/* Column 3: For SAFARINDIACABS + Rectangular Stamp + Pre-Filled Aman Mishra Signature */}
+              <div className="sm:col-span-4 p-3.5 flex flex-col items-center justify-between text-center">
+                <div className="font-extrabold text-slate-900 text-xs">
+                  For {OFFICIAL_LEGAL_NAME}
+                </div>
+
+                {/* Rectangular Official Stamp + Pre-filled Aman Mishra Signature Overlaid */}
+                <div className="relative my-2 w-full max-w-[210px] flex items-center justify-center min-h-[82px]">
+                  {draft.includeMohurStamp && (
+                    <div className="w-full border-2 border-blue-900 p-0.5 rounded-xs bg-blue-50/20 text-blue-900">
+                      <div className="border border-blue-800 px-2 py-1.5 space-y-0.5">
+                        <div className="text-[10px] font-extrabold tracking-wider uppercase text-blue-950">
+                          SAFARINDIACABS • NORTH DELHI
+                        </div>
+                        <div className="text-[9px] font-mono font-bold text-blue-900 border-b border-blue-800/40 pb-0.5">
+                          GSTIN: {OFFICIAL_GSTIN}
+                        </div>
+                        <div className="h-7" />
+                        <div className="text-[8px] font-extrabold tracking-widest uppercase text-blue-900">
+                          OFFICIAL VERIFIED TAX SEAL
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-[12px] leading-snug font-sans font-semibold text-slate-800">
-                      PROPRIETOR:{' '}
-                      {(
-                        draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR
-                      ).toUpperCase()}{' '}
-                      ({OFFICIAL_GSTIN})
-                    </div>
-                    <div className="text-[12px] leading-snug font-sans text-slate-900 mt-0.5">
-                      Date: {digitalSignTimestamp}
-                    </div>
-                    <div className="text-[12px] leading-snug font-sans text-slate-900">
-                      Location: IN
-                    </div>
+                  )}
+
+                  {/* Pre-Filled Handwritten Signature of Aman Mishra */}
+                  <img
+                    src={cleanSignUrl}
+                    alt="Aman Mishra Official Signature"
+                    className="absolute inset-x-2 top-5 h-12 w-[calc(100%-16px)] object-contain pointer-events-none select-none"
+                  />
+                </div>
+
+                <div>
+                  <div className="font-extrabold text-slate-900 text-xs">
+                    Prop. {draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}
                   </div>
-                )}
+                  <div className="text-[10px] text-slate-500">
+                    Authorised Signatory & Seal
+                  </div>
+                </div>
               </div>
             </div>
           </div>

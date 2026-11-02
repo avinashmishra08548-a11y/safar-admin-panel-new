@@ -117,7 +117,7 @@ export function clampNumber(val: number, min: number, max: number): number {
 }
 
 /* ============================================================================
- * OFFICIAL COMPANY GST, CONTACT & BRANDING CONSTANTS
+ * OFFICIAL COMPANY GST, CONTACT, SIGNATURE & BRANDING CONSTANTS
  * ========================================================================== */
 export const OFFICIAL_GSTIN = '07DQHPA3025F1ZD';
 export const OFFICIAL_SAC_CODE = '996412';
@@ -125,8 +125,12 @@ export const OFFICIAL_LOGO_URL =
   '/assets/aistudio/file_0000000069908211adc71b630e4b7dee_2c93ef6f.png';
 export const OFFICIAL_BANNER_URL =
   '/assets/aistudio/Screenshot_20261024_012510_Chrome_60fd6972.jpg';
-export const OFFICIAL_COMPANY_NAME = 'SafarIndiaCabs';
-export const OFFICIAL_LEGAL_NAME = 'SAFAR INDIA CABS (INDIA)';
+export const OFFICIAL_SIGNATURE_URL =
+  '/assets/aistudio/IMG-20260726-WA0012_a92b8f1b.jpg';
+export const OFFICIAL_COMPANY_NAME = 'SAFARINDIACABS';
+export const OFFICIAL_LEGAL_NAME = 'SAFARINDIACABS';
+export const OFFICIAL_SUBTITLE =
+  'A1 COMMERCIAL CAB & CORPORATE TRAVEL SERVICES • NORTH INDIA';
 export const OFFICIAL_PROPRIETOR = 'Aman Mishra';
 export const OFFICIAL_EMAIL = 'Safarindiacabs01@gmail.com';
 export const OFFICIAL_HELPLINE = '+91 7710080992';
@@ -279,7 +283,7 @@ export const DEFAULT_APP_RELEASE_INFO: AppReleaseInfo = {
   targetSdk: 35,
   aabSizeMb: '18.4 MB',
   apkSizeMb: '24.8 MB',
-  lastBuildDate: '2026-11-02 09:50 IST',
+  lastBuildDate: '2026-11-02 11:50 IST',
   keystoreAlias: 'safarindiacabs-release-key',
   sha1Fingerprint: '5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25',
   sha256Fingerprint:
@@ -295,6 +299,126 @@ export function formatINR(amount: number): string {
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(Math.round(amount));
+}
+
+export function formatINRDecimal(amount: number): string {
+  return `INR ${Math.round(amount).toLocaleString('en-IN')}.00`;
+}
+
+/**
+ * Converts a numeric INR amount into formal Indian English words
+ * e.g. 7860 -> "Rupees Seven Thousand Eight Hundred and Sixty Only"
+ */
+export function numberToIndianWords(amount: number): string {
+  const num = Math.max(0, Math.round(amount));
+  if (num === 0) return 'Rupees Zero Only';
+
+  const ones = [
+    '',
+    'One',
+    'Two',
+    'Three',
+    'Four',
+    'Five',
+    'Six',
+    'Seven',
+    'Eight',
+    'Nine',
+    'Ten',
+    'Eleven',
+    'Twelve',
+    'Thirteen',
+    'Fourteen',
+    'Fifteen',
+    'Sixteen',
+    'Seventeen',
+    'Eighteen',
+    'Nineteen',
+  ];
+  const tens = [
+    '',
+    '',
+    'Twenty',
+    'Thirty',
+    'Forty',
+    'Fifty',
+    'Sixty',
+    'Seventy',
+    'Eighty',
+    'Ninety',
+  ];
+
+  const convertBelowThousand = (n: number): string => {
+    let str = '';
+    if (n >= 100) {
+      str += `${ones[Math.floor(n / 100)]} Hundred`;
+      n %= 100;
+      if (n > 0) str += ' and ';
+    }
+    if (n >= 20) {
+      str += tens[Math.floor(n / 10)];
+      if (n % 10 > 0) str += ` ${ones[n % 10]}`;
+    } else if (n > 0) {
+      str += ones[n];
+    }
+    return str;
+  };
+
+  let remaining = num;
+  const parts: string[] = [];
+
+  if (remaining >= 10000000) {
+    const crores = Math.floor(remaining / 10000000);
+    parts.push(`${convertBelowThousand(crores)} Crore`);
+    remaining %= 10000000;
+  }
+  if (remaining >= 100000) {
+    const lakhs = Math.floor(remaining / 100000);
+    parts.push(`${convertBelowThousand(lakhs)} Lakh`);
+    remaining %= 100000;
+  }
+  if (remaining >= 1000) {
+    const thousands = Math.floor(remaining / 1000);
+    parts.push(`${convertBelowThousand(thousands)} Thousand`);
+    remaining %= 1000;
+  }
+  if (remaining > 0) {
+    parts.push(convertBelowThousand(remaining));
+  }
+
+  return `Rupees ${parts.join(' ')} Only`;
+}
+
+/**
+ * Identifies legacy sample/demo bookings (SIC2601–SIC2606) so they are
+ * automatically stripped from local storage and Firestore.
+ */
+const LEGACY_SAMPLE_CUSTOMERS = new Set([
+  'rajeshwari sharma',
+  'vikramaditya deshmukh',
+  'ananya krishnamurthy',
+  'siddharth malhotra',
+  'prashant verma',
+  'meenakshi sundaram',
+]);
+
+const LEGACY_SAMPLE_IDS = new Set([
+  'SIC2601',
+  'SIC2602',
+  'SIC2603',
+  'SIC2604',
+  'SIC2605',
+  'SIC2606',
+]);
+
+export function isSampleDemoBooking(b: Booking): boolean {
+  if (!b) return false;
+  const nameLower = (b.customerName || '').trim().toLowerCase();
+  if (LEGACY_SAMPLE_CUSTOMERS.has(nameLower)) return true;
+  if (LEGACY_SAMPLE_IDS.has(b.bookingId) && LEGACY_SAMPLE_CUSTOMERS.has(nameLower)) {
+    return true;
+  }
+  return false;
 }
 
 export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[] = [
@@ -316,7 +440,7 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
   {
     categoryId: 'sedan',
     vehicleCategory: 'Sedan',
-    sampleModels: 'Maruti Swift Dzire, Toyota Etios, Hyundai Aura',
+    sampleModels: 'Swift Dzire / Toyota Etios',
     seatingCapacity: 4,
     baseRatePerKm: 13,
     oneWayRatePerKm: 15,
@@ -363,13 +487,13 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
 export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [
   {
     driverId: 'DRV101',
-    driverName: 'Mahendra Singh Rathore',
-    driverPhone: '+91 94140 88211',
-    vehicleNumber: 'HR 55 AN 3319',
-    vehicleModel: 'Toyota Innova Crysta ZX',
-    vehicleCategory: 'Innova Crysta',
-    homeBaseCity: 'Delhi NCR / Gurugram',
-    dutyStatus: 'On Trip',
+    driverName: 'NITISH KUMAR',
+    driverPhone: '+91 98189 44089',
+    vehicleNumber: 'HR55BE6324',
+    vehicleModel: 'Swift Dzire / Toyota Etios',
+    vehicleCategory: 'Sedan',
+    homeBaseCity: 'North Delhi / Burari',
+    dutyStatus: 'Available',
     kycStatus: 'Verified',
     dlNumber: 'HR0620140098412',
     rcVerified: true,
@@ -378,7 +502,7 @@ export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'
     completedTrips: 342,
     totalEarnings: 845000,
     commissionDeducted: 101400,
-    pendingPayout: 14200,
+    pendingPayout: 0,
   },
   {
     driverId: 'DRV102',
@@ -397,17 +521,17 @@ export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'
     completedTrips: 289,
     totalEarnings: 512000,
     commissionDeducted: 61440,
-    pendingPayout: 6850,
+    pendingPayout: 0,
   },
   {
     driverId: 'DRV103',
-    driverName: 'Suresh Kumar Yadav',
-    driverPhone: '+91 97654 11209',
-    vehicleNumber: 'MH 12 QN 8492',
-    vehicleModel: 'Toyota Innova Crysta 2.4 GX',
+    driverName: 'Mahendra Singh Rathore',
+    driverPhone: '+91 94140 88211',
+    vehicleNumber: 'HR 55 AN 3319',
+    vehicleModel: 'Toyota Innova Crysta ZX',
     vehicleCategory: 'Innova Crysta',
-    homeBaseCity: 'Mumbai / Pune',
-    dutyStatus: 'On Trip',
+    homeBaseCity: 'Delhi NCR / Gurugram',
+    dutyStatus: 'Available',
     kycStatus: 'Verified',
     dlNumber: 'MH1220150073190',
     rcVerified: true,
@@ -416,7 +540,7 @@ export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'
     completedTrips: 410,
     totalEarnings: 980000,
     commissionDeducted: 117600,
-    pendingPayout: 9400,
+    pendingPayout: 0,
   },
   {
     driverId: 'DRV104',
@@ -425,255 +549,19 @@ export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'
     vehicleNumber: 'PB 01 D 7732',
     vehicleModel: 'Maruti Suzuki Ertiga ZXi',
     vehicleCategory: 'SUV',
-    homeBaseCity: 'Chandigarh / Shimla',
+    homeBaseCity: 'Chandigarh / Punjab',
     dutyStatus: 'Available',
     kycStatus: 'Verified',
     dlNumber: 'PB6520170042911',
     rcVerified: true,
     insuranceVerified: true,
-    rating: 4.7,
+    rating: 4.8,
     completedTrips: 198,
     totalEarnings: 428000,
     commissionDeducted: 51360,
-    pendingPayout: 4200,
-  },
-  {
-    driverId: 'DRV105',
-    driverName: 'Deepak Kumar Sharma',
-    driverPhone: '+91 98104 55210',
-    vehicleNumber: 'DL 1Z A 4921',
-    vehicleModel: 'Maruti WagonR Tour H3 CNG',
-    vehicleCategory: 'Hatchback',
-    homeBaseCity: 'Noida / Delhi NCR',
-    dutyStatus: 'Available',
-    kycStatus: 'Pending Review',
-    dlNumber: 'UP1620190051823',
-    rcVerified: true,
-    insuranceVerified: false,
-    rating: 4.6,
-    completedTrips: 94,
-    totalEarnings: 164000,
-    commissionDeducted: 19680,
-    pendingPayout: 3150,
-  },
-  {
-    driverId: 'DRV106',
-    driverName: 'Ramesh Gowda H',
-    driverPhone: '+91 94481 73920',
-    vehicleNumber: 'KA 03 MP 5104',
-    vehicleModel: 'Maruti Suzuki Ertiga ZXi+',
-    vehicleCategory: 'SUV',
-    homeBaseCity: 'Bengaluru / Mysuru',
-    dutyStatus: 'Available',
-    kycStatus: 'Verified',
-    dlNumber: 'KA0320160081204',
-    rcVerified: true,
-    insuranceVerified: true,
-    rating: 4.9,
-    completedTrips: 315,
-    totalEarnings: 690000,
-    commissionDeducted: 82800,
     pendingPayout: 0,
   },
 ];
 
-export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [
-  {
-    bookingId: 'SIC2601',
-    customerName: 'Rajeshwari Sharma',
-    customerPhone: '+91 98114 27650',
-    customerEmail: 'rajeshwari.sharma@indiacorp.in',
-    customerGstin: '07AABCI9281K1Z2',
-    tripType: 'Round Trip Outstation',
-    pickupCity: 'Connaught Place, New Delhi',
-    dropCity: 'Tajganj, Agra (UP)',
-    pickupDate: '2026-11-02',
-    pickupTime: '06:00 AM',
-    vehicleCategory: 'Sedan',
-    distanceKm: 460,
-    tripDays: 2,
-    perKmRate: 13,
-    baseFare: 6500,
-    driverAllowance: 700,
-    stateTax: 550,
-    nightCharges: 0,
-    marketDiscount: 200,
-    gstAmount: 378,
-    totalFare: 7928,
-    paymentMode: '20% Advance',
-    advancePaid: 1586,
-    balanceAmount: 6342,
-    status: 'Pending',
-    driverName: '',
-    driverPhone: '',
-    vehicleNumber: '',
-    vehicleModel: '',
-    invoiceNumber: '',
-    invoiceReady: false,
-  },
-  {
-    bookingId: 'SIC2602',
-    customerName: 'Vikramaditya Deshmukh',
-    customerPhone: '+91 98201 64319',
-    customerEmail: 'vikram.deshmukh@finserve.co.in',
-    customerGstin: '27AAFCV3910D1Z8',
-    tripType: 'One Way Outstation',
-    pickupCity: 'Andheri West, Mumbai',
-    dropCity: 'Hinjewadi Phase 2, Pune',
-    pickupDate: '2026-11-01',
-    pickupTime: '08:30 AM',
-    vehicleCategory: 'Innova Crysta',
-    distanceKm: 165,
-    tripDays: 1,
-    perKmRate: 24,
-    baseFare: 3960,
-    driverAllowance: 500,
-    stateTax: 0,
-    nightCharges: 0,
-    marketDiscount: 200,
-    gstAmount: 213,
-    totalFare: 4473,
-    paymentMode: 'Full Paid',
-    advancePaid: 4473,
-    balanceAmount: 0,
-    status: 'Confirmed',
-    driverName: 'Suresh Kumar Yadav',
-    driverPhone: '+91 97654 11209',
-    vehicleNumber: 'MH 12 QN 8492',
-    vehicleModel: 'Toyota Innova Crysta 2.4 GX',
-    invoiceNumber: '',
-    invoiceReady: false,
-  },
-  {
-    bookingId: 'SIC2603',
-    customerName: 'Ananya Krishnamurthy',
-    customerPhone: '+91 99002 58140',
-    customerEmail: 'ananya.k@techspire.io',
-    customerGstin: '29AABCT4412L1Z5',
-    tripType: 'Round Trip Outstation',
-    pickupCity: 'Indiranagar, Bengaluru',
-    dropCity: 'Madikeri, Coorg (Karnataka)',
-    pickupDate: '2026-10-29',
-    pickupTime: '05:30 AM',
-    vehicleCategory: 'SUV',
-    distanceKm: 620,
-    tripDays: 2,
-    perKmRate: 17,
-    baseFare: 10540,
-    driverAllowance: 800,
-    stateTax: 0,
-    nightCharges: 350,
-    marketDiscount: 200,
-    gstAmount: 575,
-    totalFare: 12065,
-    paymentMode: 'Full Paid',
-    advancePaid: 12065,
-    balanceAmount: 0,
-    status: 'Completed',
-    driverName: 'Ramesh Gowda H',
-    driverPhone: '+91 94481 73920',
-    vehicleNumber: 'KA 03 MP 5104',
-    vehicleModel: 'Maruti Suzuki Ertiga ZXi+',
-    invoiceNumber: 'INV-SIC-2610-2603',
-    invoiceReady: true,
-  },
-  {
-    bookingId: 'SIC2604',
-    customerName: 'Siddharth Malhotra',
-    customerPhone: '+91 98180 41299',
-    customerEmail: 'siddharth.m@heritagehotels.com',
-    customerGstin: '08AAACH7409R1Z1',
-    tripType: 'Round Trip Outstation',
-    pickupCity: 'Gurugram Cyber Hub (HR)',
-    dropCity: 'City Palace, Jaipur (RJ)',
-    pickupDate: '2026-11-01',
-    pickupTime: '07:00 AM',
-    vehicleCategory: 'Innova Crysta',
-    distanceKm: 600,
-    tripDays: 2,
-    perKmRate: 21,
-    baseFare: 12600,
-    driverAllowance: 1000,
-    stateTax: 950,
-    nightCharges: 400,
-    marketDiscount: 200,
-    gstAmount: 738,
-    totalFare: 15488,
-    paymentMode: '20% Advance',
-    advancePaid: 3098,
-    balanceAmount: 12390,
-    status: 'Confirmed',
-    driverName: 'Mahendra Singh Rathore',
-    driverPhone: '+91 94140 88211',
-    vehicleNumber: 'HR 55 AN 3319',
-    vehicleModel: 'Toyota Innova Crysta ZX',
-    invoiceNumber: '',
-    invoiceReady: false,
-  },
-  {
-    bookingId: 'SIC2605',
-    customerName: 'Prashant Verma',
-    customerPhone: '+91 97172 39011',
-    customerEmail: 'prashant.verma88@gmail.com',
-    customerGstin: '',
-    tripType: 'One Way Outstation',
-    pickupCity: 'Sector 17, Chandigarh',
-    dropCity: 'Mall Road, Shimla (HP)',
-    pickupDate: '2026-11-03',
-    pickupTime: '09:00 AM',
-    vehicleCategory: 'Hatchback',
-    distanceKm: 250,
-    tripDays: 1,
-    perKmRate: 13,
-    baseFare: 3250,
-    driverAllowance: 300,
-    stateTax: 450,
-    nightCharges: 0,
-    marketDiscount: 200,
-    gstAmount: 190,
-    totalFare: 3990,
-    paymentMode: '20% Advance',
-    advancePaid: 798,
-    balanceAmount: 3192,
-    status: 'Pending',
-    driverName: '',
-    driverPhone: '',
-    vehicleNumber: '',
-    vehicleModel: '',
-    invoiceNumber: '',
-    invoiceReady: false,
-  },
-  {
-    bookingId: 'SIC2606',
-    customerName: 'Meenakshi Sundaram',
-    customerPhone: '+91 98401 67210',
-    customerEmail: 'meenakshi@sundaramexports.in',
-    customerGstin: '33AABCS1429B1Z9',
-    tripType: 'Round Trip Outstation',
-    pickupCity: 'T. Nagar, Chennai',
-    dropCity: 'White Town, Puducherry',
-    pickupDate: '2026-10-27',
-    pickupTime: '06:30 AM',
-    vehicleCategory: 'Sedan',
-    distanceKm: 360,
-    tripDays: 1,
-    perKmRate: 13,
-    baseFare: 4680,
-    driverAllowance: 350,
-    stateTax: 550,
-    nightCharges: 0,
-    marketDiscount: 200,
-    gstAmount: 269,
-    totalFare: 5649,
-    paymentMode: 'Full Paid',
-    advancePaid: 5649,
-    balanceAmount: 0,
-    status: 'Completed',
-    driverName: 'Murugan Selvam',
-    driverPhone: '+91 98410 55392',
-    vehicleNumber: 'TN 09 CT 7741',
-    vehicleModel: 'Toyota Etios Platinum',
-    invoiceNumber: 'INV-SIC-2610-2606',
-    invoiceReady: true,
-  },
-];
+// All sample/example bookings removed as requested by owner — only real bookings are shown
+export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [];
