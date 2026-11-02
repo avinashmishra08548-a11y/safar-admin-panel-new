@@ -1,0 +1,252 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerified() && request.auth.token.email == 'avinashmishra08548@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Entity Validation Blueprints (Verbatim from firebase-blueprint.json)
+    function isValidBooking(data) {
+      return data.keys().hasAll([
+        'bookingId', 'customerName', 'customerPhone', 'customerEmail', 'customerGstin',
+        'tripType', 'pickupCity', 'dropCity', 'pickupDate', 'pickupTime',
+        'vehicleCategory', 'distanceKm', 'tripDays', 'perKmRate', 'baseFare',
+        'driverAllowance', 'stateTax', 'nightCharges', 'marketDiscount', 'gstAmount',
+        'totalFare', 'paymentMode', 'advancePaid', 'balanceAmount', 'status',
+        'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel',
+        'invoiceNumber', 'invoiceReady', 'createdBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'bookingId', 'customerName', 'customerPhone', 'customerEmail', 'customerGstin',
+        'tripType', 'pickupCity', 'dropCity', 'pickupDate', 'pickupTime',
+        'vehicleCategory', 'distanceKm', 'tripDays', 'perKmRate', 'baseFare',
+        'driverAllowance', 'stateTax', 'nightCharges', 'marketDiscount', 'gstAmount',
+        'totalFare', 'paymentMode', 'advancePaid', 'balanceAmount', 'status',
+        'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel',
+        'invoiceNumber', 'invoiceReady', 'createdBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.bookingId is string && data.bookingId.size() >= 6 && data.bookingId.size() <= 16 && data.bookingId.matches('^SIC[0-9]{4,10}$') &&
+      data.customerName is string && data.customerName.size() >= 2 && data.customerName.size() <= 80 &&
+      data.customerPhone is string && data.customerPhone.size() >= 10 && data.customerPhone.size() <= 16 && data.customerPhone.matches('^[0-9+\\-\\s]{10,16}$') &&
+      data.customerEmail is string && data.customerEmail.size() >= 5 && data.customerEmail.size() <= 100 &&
+      data.customerGstin is string && data.customerGstin.size() >= 0 && data.customerGstin.size() <= 20 &&
+      data.tripType is string && data.tripType.size() <= 30 && data.tripType in ['Round Trip Outstation', 'One Way Outstation', 'Local 8Hr/80Km', 'Airport Transfer'] &&
+      data.pickupCity is string && data.pickupCity.size() >= 2 && data.pickupCity.size() <= 120 &&
+      data.dropCity is string && data.dropCity.size() >= 2 && data.dropCity.size() <= 120 &&
+      data.pickupDate is string && data.pickupDate.size() == 10 && data.pickupDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+      data.pickupTime is string && data.pickupTime.size() >= 4 && data.pickupTime.size() <= 12 &&
+      data.vehicleCategory is string && data.vehicleCategory.size() <= 20 && data.vehicleCategory in ['Hatchback', 'Sedan', 'SUV', 'Innova Crysta'] &&
+      data.distanceKm is number && data.distanceKm >= 1 && data.distanceKm <= 25000 &&
+      data.tripDays is number && data.tripDays >= 1 && data.tripDays <= 90 &&
+      data.perKmRate is number && data.perKmRate >= 5 && data.perKmRate <= 500 &&
+      data.baseFare is number && data.baseFare >= 0 && data.baseFare <= 5000000 &&
+      data.driverAllowance is number && data.driverAllowance >= 0 && data.driverAllowance <= 500000 &&
+      data.stateTax is number && data.stateTax >= 0 && data.stateTax <= 500000 &&
+      data.nightCharges is number && data.nightCharges >= 0 && data.nightCharges <= 500000 &&
+      data.marketDiscount is number && data.marketDiscount >= 0 && data.marketDiscount <= 50000 &&
+      data.gstAmount is number && data.gstAmount >= 0 && data.gstAmount <= 1000000 &&
+      data.totalFare is number && data.totalFare >= 0 && data.totalFare <= 6000000 &&
+      data.paymentMode is string && data.paymentMode.size() <= 20 && data.paymentMode in ['20% Advance', 'Full Paid'] &&
+      data.advancePaid is number && data.advancePaid >= 0 && data.advancePaid <= 6000000 &&
+      data.balanceAmount is number && data.balanceAmount >= 0 && data.balanceAmount <= 6000000 &&
+      data.status is string && data.status.size() <= 15 && data.status in ['Pending', 'Confirmed', 'Completed', 'Cancelled'] &&
+      data.driverName is string && data.driverName.size() >= 0 && data.driverName.size() <= 80 &&
+      data.driverPhone is string && data.driverPhone.size() >= 0 && data.driverPhone.size() <= 16 &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 0 && data.vehicleNumber.size() <= 20 &&
+      data.vehicleModel is string && data.vehicleModel.size() >= 0 && data.vehicleModel.size() <= 60 &&
+      data.invoiceNumber is string && data.invoiceNumber.size() >= 0 && data.invoiceNumber.size() <= 32 &&
+      data.invoiceReady is bool &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidTariffPlan(data) {
+      return data.keys().hasAll([
+        'categoryId', 'vehicleCategory', 'sampleModels', 'seatingCapacity',
+        'baseRatePerKm', 'oneWayRatePerKm', 'minKmPerDay', 'driverAllowancePerDay',
+        'nightChargeDefault', 'stateTaxDefault', 'gstPercentage',
+        'marketDiscountEnabled', 'marketDiscountAmount', 'createdBy', 'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'categoryId', 'vehicleCategory', 'sampleModels', 'seatingCapacity',
+        'baseRatePerKm', 'oneWayRatePerKm', 'minKmPerDay', 'driverAllowancePerDay',
+        'nightChargeDefault', 'stateTaxDefault', 'gstPercentage',
+        'marketDiscountEnabled', 'marketDiscountAmount', 'createdBy', 'updatedAt'
+      ]) &&
+      data.categoryId is string && data.categoryId.size() <= 20 && data.categoryId in ['hatchback', 'sedan', 'suv', 'innova_crysta'] &&
+      data.vehicleCategory is string && data.vehicleCategory.size() <= 20 && data.vehicleCategory in ['Hatchback', 'Sedan', 'SUV', 'Innova Crysta'] &&
+      data.sampleModels is string && data.sampleModels.size() >= 2 && data.sampleModels.size() <= 100 &&
+      data.seatingCapacity is number && data.seatingCapacity >= 2 && data.seatingCapacity <= 20 &&
+      data.baseRatePerKm is number && data.baseRatePerKm >= 5 && data.baseRatePerKm <= 500 &&
+      data.oneWayRatePerKm is number && data.oneWayRatePerKm >= 5 && data.oneWayRatePerKm <= 500 &&
+      data.minKmPerDay is number && data.minKmPerDay >= 50 && data.minKmPerDay <= 1000 &&
+      data.driverAllowancePerDay is number && data.driverAllowancePerDay >= 0 && data.driverAllowancePerDay <= 10000 &&
+      data.nightChargeDefault is number && data.nightChargeDefault >= 0 && data.nightChargeDefault <= 10000 &&
+      data.stateTaxDefault is number && data.stateTaxDefault >= 0 && data.stateTaxDefault <= 50000 &&
+      data.gstPercentage is number && data.gstPercentage >= 0 && data.gstPercentage <= 28 &&
+      data.marketDiscountEnabled is bool &&
+      data.marketDiscountAmount is number && data.marketDiscountAmount >= 0 && data.marketDiscountAmount <= 10000 &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'name', 'role', 'createdAt']) &&
+      data.keys().hasOnly(['uid', 'email', 'name', 'role', 'createdAt']) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+      data.email is string && data.email.size() >= 5 && data.email.size() <= 100 &&
+      data.name is string && data.name.size() >= 2 && data.name.size() <= 80 &&
+      data.role is string && data.role.size() <= 30 && data.role in ['Operations Admin', 'Super Admin'] &&
+      data.createdAt is timestamp;
+    }
+
+    // 4. Collection Rules: /bookings/{bookingId}
+    match /bookings/{bookingId} {
+      allow get: if isVerified() && isValidId(bookingId) && (
+        existing().createdBy == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isVerified() && (
+        resource.data.createdBy == request.auth.uid || isBootstrappedAdmin()
+      );
+
+      allow create: if isVerified() &&
+        isValidId(bookingId) &&
+        isValidBooking(incoming()) &&
+        incoming().bookingId == bookingId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerified() &&
+        isValidId(bookingId) &&
+        isValidBooking(incoming()) &&
+        incoming().bookingId == existing().bookingId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().createdBy == request.auth.uid &&
+            existing().status != 'Completed' &&
+            existing().status != 'Cancelled' &&
+            (
+              // Action 1: Assign Driver Details
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel', 'status', 'updatedAt'
+              ]) ||
+              // Action 2: One-Click Status & GST Invoice Progression
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'status', 'invoiceNumber', 'invoiceReady', 'advancePaid', 'balanceAmount', 'paymentMode', 'updatedAt'
+              ])
+            )
+          )
+        );
+
+      allow delete: if isVerified() && isValidId(bookingId) && isAdmin();
+    }
+
+    // 5. Collection Rules: /tariffs/{tariffId}
+    match /tariffs/{tariffId} {
+      allow get: if isVerified() && isValidId(tariffId) && (
+        existing().createdBy == request.auth.uid || isAdmin()
+      );
+
+      allow list: if isVerified() && (
+        resource.data.createdBy == request.auth.uid || isBootstrappedAdmin()
+      );
+
+      allow create: if isVerified() &&
+        isValidId(tariffId) &&
+        isValidTariffPlan(incoming()) &&
+        incoming().categoryId == tariffId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerified() &&
+        isValidId(tariffId) &&
+        isValidTariffPlan(incoming()) &&
+        incoming().categoryId == existing().categoryId &&
+        incoming().vehicleCategory == existing().vehicleCategory &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().createdBy == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'sampleModels', 'seatingCapacity', 'baseRatePerKm', 'oneWayRatePerKm',
+              'minKmPerDay', 'driverAllowancePerDay', 'nightChargeDefault',
+              'stateTaxDefault', 'gstPercentage', 'marketDiscountEnabled',
+              'marketDiscountAmount', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isVerified() && isValidId(tariffId) && isAdmin();
+    }
+
+    // 6. Collection Rules: /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isVerified() && isValidId(adminId) && (
+        request.auth.uid == adminId || isAdmin()
+      );
+
+      allow list: if isVerified() && (
+        resource.data.uid == request.auth.uid || isBootstrappedAdmin()
+      );
+
+      allow create: if isVerified() &&
+        isValidId(adminId) &&
+        isValidAdminUser(incoming()) &&
+        incoming().uid == adminId &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerified() &&
+        isValidId(adminId) &&
+        isValidAdminUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role']);
+
+      allow delete: if isVerified() && isValidId(adminId) && isBootstrappedAdmin();
+    }
+  }
+}

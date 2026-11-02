@@ -1,0 +1,370 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Customer Cab Booking",
+      "description": "Represents a customer cab booking made on safarindiacabs.com managed in the Customer Operations Control Room.",
+      "type": "object",
+      "properties": {
+        "bookingId": {
+          "type": "string",
+          "description": "Human-readable SafarIndiaCabs booking reference (e.g., SIC2601)",
+          "minLength": 6,
+          "maxLength": 16,
+          "pattern": "^SIC[0-9]{4,10}$"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Full name of the customer who booked the ride",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "customerPhone": {
+          "type": "string",
+          "description": "Customer 10-digit Indian mobile number with optional +91 prefix",
+          "minLength": 10,
+          "maxLength": 16,
+          "pattern": "^[0-9+ -]{10,16}$"
+        },
+        "customerEmail": {
+          "type": "string",
+          "description": "Customer email address for itinerary and GST tax invoice",
+          "minLength": 5,
+          "maxLength": 100
+        },
+        "customerGstin": {
+          "type": "string",
+          "description": "Optional customer B2B GSTIN for input tax credit on invoice",
+          "minLength": 0,
+          "maxLength": 20
+        },
+        "tripType": {
+          "type": "string",
+          "description": "Type of cab itinerary booked",
+          "enum": ["Round Trip Outstation", "One Way Outstation", "Local 8Hr/80Km", "Airport Transfer"],
+          "maxLength": 30
+        },
+        "pickupCity": {
+          "type": "string",
+          "description": "Origin city and pickup landmark",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "dropCity": {
+          "type": "string",
+          "description": "Destination city and drop landmark",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "pickupDate": {
+          "type": "string",
+          "description": "Pickup date in YYYY-MM-DD format",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "pickupTime": {
+          "type": "string",
+          "description": "Pickup time string (e.g., 06:30 AM)",
+          "minLength": 4,
+          "maxLength": 12
+        },
+        "vehicleCategory": {
+          "type": "string",
+          "description": "Selected fleet category",
+          "enum": ["Hatchback", "Sedan", "SUV", "Innova Crysta"],
+          "maxLength": 20
+        },
+        "distanceKm": {
+          "type": "number",
+          "description": "Total billable distance in kilometers"
+        },
+        "tripDays": {
+          "type": "number",
+          "description": "Duration of trip in days"
+        },
+        "perKmRate": {
+          "type": "number",
+          "description": "Applied per-KM base rate in INR"
+        },
+        "baseFare": {
+          "type": "number",
+          "description": "Computed distance base fare in INR"
+        },
+        "driverAllowance": {
+          "type": "number",
+          "description": "Total driver allowance (DA) in INR"
+        },
+        "stateTax": {
+          "type": "number",
+          "description": "Inter-state permit and toll tax estimate in INR"
+        },
+        "nightCharges": {
+          "type": "number",
+          "description": "Night driving allowance in INR"
+        },
+        "marketDiscount": {
+          "type": "number",
+          "description": "Competitive market price discount applied in INR (e.g. 200)"
+        },
+        "gstAmount": {
+          "type": "number",
+          "description": "5% SAC 996412 GST tax amount in INR"
+        },
+        "totalFare": {
+          "type": "number",
+          "description": "Final net payable fare inclusive of GST and discount in INR"
+        },
+        "paymentMode": {
+          "type": "string",
+          "description": "Customer advance payment selection on safarindiacabs.com",
+          "enum": ["20% Advance", "Full Paid"],
+          "maxLength": 20
+        },
+        "advancePaid": {
+          "type": "number",
+          "description": "Amount already collected online via Razorpay/UPI in INR"
+        },
+        "balanceAmount": {
+          "type": "number",
+          "description": "Remaining balance payable to driver/operations upon trip completion in INR"
+        },
+        "status": {
+          "type": "string",
+          "description": "Current lifecycle status of the booking",
+          "enum": ["Pending", "Confirmed", "Completed", "Cancelled"],
+          "maxLength": 15
+        },
+        "driverName": {
+          "type": "string",
+          "description": "Assigned chauffeur name shown in Customer My Rides",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "driverPhone": {
+          "type": "string",
+          "description": "Assigned chauffeur mobile number shown in Customer My Rides",
+          "minLength": 0,
+          "maxLength": 16
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "description": "Assigned registration plate number (e.g., DL 01 CAB 4821)",
+          "minLength": 0,
+          "maxLength": 20
+        },
+        "vehicleModel": {
+          "type": "string",
+          "description": "Specific car model dispatched (e.g., Maruti Swift Dzire CNG)",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "invoiceNumber": {
+          "type": "string",
+          "description": "Generated GST Invoice number once Completed",
+          "minLength": 0,
+          "maxLength": 32
+        },
+        "invoiceReady": {
+          "type": "boolean",
+          "description": "Whether final GST Invoice download is unlocked in customer My Rides"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID of the authenticated admin or customer who created the record",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when booking was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when booking was last updated"
+        }
+      },
+      "required": [
+        "bookingId",
+        "customerName",
+        "customerPhone",
+        "customerEmail",
+        "customerGstin",
+        "tripType",
+        "pickupCity",
+        "dropCity",
+        "pickupDate",
+        "pickupTime",
+        "vehicleCategory",
+        "distanceKm",
+        "tripDays",
+        "perKmRate",
+        "baseFare",
+        "driverAllowance",
+        "stateTax",
+        "nightCharges",
+        "marketDiscount",
+        "gstAmount",
+        "totalFare",
+        "paymentMode",
+        "advancePaid",
+        "balanceAmount",
+        "status",
+        "driverName",
+        "driverPhone",
+        "vehicleNumber",
+        "vehicleModel",
+        "invoiceNumber",
+        "invoiceReady",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TariffPlan": {
+      "title": "Outstation Vehicle Tariff & Pricing Config",
+      "description": "Per-KM rates, allowances, state taxes, and market discount rules for each vehicle category on safarindiacabs.com.",
+      "type": "object",
+      "properties": {
+        "categoryId": {
+          "type": "string",
+          "description": "Slug identifier for vehicle class",
+          "enum": ["hatchback", "sedan", "suv", "innova_crysta"],
+          "maxLength": 20
+        },
+        "vehicleCategory": {
+          "type": "string",
+          "description": "Display name of the vehicle category",
+          "enum": ["Hatchback", "Sedan", "SUV", "Innova Crysta"],
+          "maxLength": 20
+        },
+        "sampleModels": {
+          "type": "string",
+          "description": "Representative vehicle models shown on safarindiacabs.com",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "seatingCapacity": {
+          "type": "number",
+          "description": "Passenger seating capacity excluding driver"
+        },
+        "baseRatePerKm": {
+          "type": "number",
+          "description": "Outstation round-trip per-KM rate in INR"
+        },
+        "oneWayRatePerKm": {
+          "type": "number",
+          "description": "Outstation one-way drop per-KM rate in INR"
+        },
+        "minKmPerDay": {
+          "type": "number",
+          "description": "Minimum billable kilometers per calendar day"
+        },
+        "driverAllowancePerDay": {
+          "type": "number",
+          "description": "Default daily driver bata / allowance (DA) in INR"
+        },
+        "nightChargeDefault": {
+          "type": "number",
+          "description": "Default night driving charge (10 PM to 6 AM) in INR"
+        },
+        "stateTaxDefault": {
+          "type": "number",
+          "description": "Default state border permit tax estimate in INR"
+        },
+        "gstPercentage": {
+          "type": "number",
+          "description": "Applicable GST percentage (5% for cab services)"
+        },
+        "marketDiscountEnabled": {
+          "type": "boolean",
+          "description": "Whether the competitive market price discount is active for this category"
+        },
+        "marketDiscountAmount": {
+          "type": "number",
+          "description": "Flat competitive market discount in INR (default 200)"
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID of admin who initialized or owns this tariff record",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last tariff update"
+        }
+      },
+      "required": [
+        "categoryId",
+        "vehicleCategory",
+        "sampleModels",
+        "seatingCapacity",
+        "baseRatePerKm",
+        "oneWayRatePerKm",
+        "minKmPerDay",
+        "driverAllowancePerDay",
+        "nightChargeDefault",
+        "stateTaxDefault",
+        "gstPercentage",
+        "marketDiscountEnabled",
+        "marketDiscountAmount",
+        "createdBy",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "Customer Operations Admin Profile",
+      "description": "Authorized admin operator record for admin.safarindiacabs.com",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified administrator email address",
+          "minLength": 5,
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of operations administrator",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "description": "Assigned role in Customer Operations",
+          "enum": ["Operations Admin", "Super Admin"],
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin profile was created"
+        }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Stores all customer cab bookings from safarindiacabs.com with driver assignment and GST invoice state."
+    },
+    "/tariffs/{tariffId}": {
+      "schema": { "$ref": "#/entities/TariffPlan" },
+      "description": "Stores outstation per-KM rates, state taxes, driver allowances, night charges, and ₹200 market discount logic per vehicle class."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Stores authorized Customer Operations administrators."
+    }
+  }
+}

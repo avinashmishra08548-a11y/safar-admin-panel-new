@@ -1,0 +1,6 @@
+{
+  "name": "SafarIndiaCabs Customer Operations Admin",
+  "description": "Production Customer Operations & Pricing Control Room for SafarIndiaCabs (admin.safarindiacabs.com) with live booking dispatch, outstation tariff engine, and GST billing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
