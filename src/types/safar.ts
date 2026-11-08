@@ -89,6 +89,9 @@ export interface Booking {
   createdBy: string;
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
+  firestoreDocId?: string;
+  syncedCollection?: string;
+  timestampMs?: number;
 }
 
 export interface TariffPlan {
@@ -642,6 +645,49 @@ export function isSampleDemoDriver(d: FleetDriver): boolean {
 export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [];
 export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [];
 
+export function extractTimestampMs(val: unknown): number {
+  if (!val) return 0;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    return val > 1e12 ? val : val * 1000;
+  }
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof val === 'object' && val !== null) {
+    if (
+      'toMillis' in val &&
+      typeof (val as { toMillis: () => number }).toMillis === 'function'
+    ) {
+      return (val as { toMillis: () => number }).toMillis();
+    }
+    if (
+      'seconds' in val &&
+      typeof (val as { seconds: number }).seconds === 'number'
+    ) {
+      return (val as { seconds: number }).seconds * 1000;
+    }
+  }
+  return 0;
+}
+
+export function sortBookingsNewestFirst(list: Booking[]): Booking[] {
+  return [...list].sort((a, b) => {
+    const tA =
+      a.timestampMs ||
+      extractTimestampMs(a.createdAt) ||
+      extractTimestampMs(a.updatedAt) ||
+      0;
+    const tB =
+      b.timestampMs ||
+      extractTimestampMs(b.createdAt) ||
+      extractTimestampMs(b.updatedAt) ||
+      0;
+    if (tB !== tA) return tB - tA;
+    return (b.bookingId || '').localeCompare(a.bookingId || '');
+  });
+}
+
 /**
  * Normalizes any incoming booking document from Firestore (whether written by the
  * Customer Android App, Customer Website safarindiacabs.com, or Admin Panel) into
@@ -649,20 +695,32 @@ export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 
  */
 export function normalizeIncomingBooking(
   docId: string,
-  raw: Record<string, unknown> | null | undefined
+  raw: Record<string, unknown> | null | undefined,
+  collectionName = 'bookings'
 ): Booking | null {
   if (!raw || typeof raw !== 'object') return null;
 
-  const rawId = String(
-    raw.bookingId || raw.booking_id || raw.id || raw.referenceId || docId || ''
+  const explicitId = String(
+    raw.bookingId || raw.booking_id || raw.referenceId || raw.bookingRef || raw.id || ''
   ).trim();
-  const digits = rawId.replace(/\D/g, '');
+  const explicitDigits = explicitId.replace(/\D/g, '');
+  const docDigits = String(docId || '').replace(/\D/g, '');
+
+  // Deterministic hash from docId so auto-generated Firestore IDs never collide
+  const docHash = Math.abs(
+    String(docId || '0')
+      .split('')
+      .reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) | 0, 7)
+  );
+
   const bookingId =
-    rawId.startsWith('SIC') && digits.length >= 4
-      ? `SIC${digits}`
-      : digits.length >= 4
-      ? `SIC${digits.slice(-6)}`
-      : `SIC${Math.floor(2607 + Math.abs(docId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % 7000)}`;
+    explicitId.toUpperCase().startsWith('SIC') && explicitDigits.length >= 4
+      ? `SIC${explicitDigits.slice(0, 8)}`
+      : explicitDigits.length >= 4
+      ? `SIC${explicitDigits.slice(-6)}`
+      : String(docId || '').toUpperCase().startsWith('SIC') && docDigits.length >= 4
+      ? `SIC${docDigits.slice(0, 8)}`
+      : `SIC${2608 + (docHash % 7300)}`;
 
   const customerName = String(
     raw.customerName ||
@@ -893,6 +951,14 @@ export function normalizeIncomingBooking(
     createdBy: String(raw.createdBy || raw.userId || 'customer_portal'),
     createdAt: (raw.createdAt as Timestamp) || null,
     updatedAt: (raw.updatedAt as Timestamp) || null,
+    firestoreDocId: docId || bookingId,
+    syncedCollection: collectionName,
+    timestampMs:
+      extractTimestampMs(raw.createdAt) ||
+      extractTimestampMs(raw.updatedAt) ||
+      extractTimestampMs(raw.timestamp) ||
+      extractTimestampMs(raw.bookedAt) ||
+      Number(raw.timestampMs || 0),
   };
 
   if (isSampleDemoBooking(normalized)) {

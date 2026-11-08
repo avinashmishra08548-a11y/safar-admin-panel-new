@@ -47,6 +47,7 @@ import {
   isSampleDemoBooking,
   isSampleDemoDriver,
   normalizeIncomingBooking,
+  sortBookingsNewestFirst,
 } from './types/safar';
 import { LoginScreen } from './components/LoginScreen';
 import { AssignDriverModal } from './components/AssignDriverModal';
@@ -71,9 +72,13 @@ import {
 import { BookingIdFirestoreSearchBar } from './components/BookingIdFirestoreSearchBar';
 import {
   BOOKING_BROADCAST_CHANNEL,
+  FirestoreSyncDiagnosticState,
+  PRIMARY_BOOKINGS_COLLECTION,
+  diagnoseAndLogFirestoreError,
   generateUniqueBookingId,
   normalizeBookingIdInput,
   persistBookingToFirestore,
+  subscribeToRealtimeCustomerBookings,
 } from './lib/bookingSyncService';
 import {
   Search,
@@ -345,6 +350,17 @@ function AdminDashboard() {
   const [dataLoading, setDataLoading] = useState(false);
   const [seedingData, setSeedingData] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [firestoreSyncDiag, setFirestoreSyncDiag] =
+    useState<FirestoreSyncDiagnosticState>({
+      status: 'connecting',
+      activeCollection: PRIMARY_BOOKINGS_COLLECTION,
+      activeDatabase: 'named-db + default-db',
+      totalCloudDocs: 0,
+      lastSyncedAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      collectionCounts: {},
+    });
 
   // Control Room Filters (Status + Trip Category + Date + Search)
   const [searchQuery, setSearchQuery] = useState('');
@@ -446,83 +462,75 @@ function AdminDashboard() {
     return () => unsub();
   }, []);
 
-  // Real-time Firestore listeners (attaches for both Firebase Auth & Direct Operator Console sessions, across both named and default DBs)
+  // Real-time Firestore listeners (attaches for both Firebase Auth & Direct Operator Console sessions, across both named and default DBs and all customer booking collections)
   useEffect(() => {
     if (!authReady || (!user && !directOperatorEmail)) {
       setDataLoading(false);
       return;
     }
 
-    const mergeAndSaveBookings = (incomingDocs: Booking[]) => {
-      setBookings((prev) => {
-        const byId = new Map<string, Booking>();
-        // Keep existing local real bookings so nothing is lost
-        prev.forEach((b) => {
-          if (b && b.bookingId && !isSampleDemoBooking(b)) {
-            byId.set(b.bookingId, b);
-          }
-        });
-        // Merge incoming Firestore bookings
-        incomingDocs.forEach((b) => {
-          if (b && b.bookingId && !isSampleDemoBooking(b)) {
-            byId.set(b.bookingId, b);
-          }
-        });
-        const merged = Array.from(byId.values()).sort((a, b) =>
-          b.bookingId.localeCompare(a.bookingId)
-        );
-        localStorage.setItem('safar_local_bookings', JSON.stringify(merged));
-        return merged;
-      });
-      setDataLoading(false);
-    };
+    const unsubRealtimeBookings = subscribeToRealtimeCustomerBookings({
+      onBookingsSnapshot: (
+        cloudBookings,
+        { addedBookings, removedBookingIds, isInitialLoad }
+      ) => {
+        const removedSet = new Set(removedBookingIds);
 
-    const unsubBookingsNamed = onSnapshot(
-      collection(db, 'bookings'),
-      (snapshot) => {
-        const list: Booking[] = [];
-        snapshot.forEach((docSnap) => {
-          const normalized = normalizeIncomingBooking(
-            docSnap.id,
-            docSnap.data() as Record<string, unknown>
-          );
-          if (!normalized) return;
-          if (isSampleDemoBooking(normalized)) {
-            deleteDoc(doc(db, 'bookings', docSnap.id)).catch(() => {});
-          } else {
-            list.push(normalized);
+        setBookings((prev) => {
+          const byId = new Map<string, Booking>();
+
+          // 1. Retain existing local real bookings unless explicitly deleted in Firestore
+          prev.forEach((b) => {
+            if (
+              b &&
+              b.bookingId &&
+              !isSampleDemoBooking(b) &&
+              !removedSet.has(b.bookingId)
+            ) {
+              byId.set(b.bookingId, b);
+            }
+          });
+
+          // 2. Apply all live cloud bookings (overwriting stale local copies with latest Firestore state)
+          cloudBookings.forEach((b) => {
+            if (b && b.bookingId && !isSampleDemoBooking(b)) {
+              byId.set(b.bookingId, b);
+            }
+          });
+
+          const merged = sortBookingsNewestFirst(Array.from(byId.values()));
+          try {
+            localStorage.setItem(
+              'safar_local_bookings',
+              JSON.stringify(merged)
+            );
+          } catch {
+            // ignore storage quota errors
           }
+          return merged;
         });
-        mergeAndSaveBookings(list);
-      },
-      (error) => {
+
         setDataLoading(false);
-        logFirestoreSyncWarning(error, OperationType.LIST, 'bookings');
-      }
-    );
 
-    const unsubBookingsDefault = onSnapshot(
-      collection(defaultDb, 'bookings'),
-      (snapshot) => {
-        if (snapshot.empty) return;
-        const list: Booking[] = [];
-        snapshot.forEach((docSnap) => {
-          const normalized = normalizeIncomingBooking(
-            docSnap.id,
-            docSnap.data() as Record<string, unknown>
+        // 3. When a new booking arrives in real time after initial load, surface it immediately without manual refresh
+        if (!isInitialLoad && addedBookings.length > 0) {
+          const latest = addedBookings[0];
+          setStatusFilter((prevStatus) =>
+            prevStatus !== 'All' && prevStatus !== 'Pending Driver'
+              ? 'All'
+              : prevStatus
           );
-          if (normalized && !isSampleDemoBooking(normalized)) {
-            list.push(normalized);
-          }
-        });
-        if (list.length > 0) {
-          mergeAndSaveBookings(list);
+          setCategoryFilter('All');
+          setPickupDateFilter('');
+          showToast(
+            `New Customer Booking Live Synced: ${latest.bookingId} (${latest.customerName} • ${latest.pickupCity} → ${latest.dropCity})`
+          );
         }
       },
-      () => {
-        // defaultDb may not have rules or may be empty; ignore quietly
-      }
-    );
+      onDiagnosticChange: (diag) => {
+        setFirestoreSyncDiag(diag);
+      },
+    });
 
     const unsubTariffs = onSnapshot(
       collection(db, 'tariffs'),
@@ -578,8 +586,7 @@ function AdminDashboard() {
     );
 
     return () => {
-      unsubBookingsNamed();
-      unsubBookingsDefault();
+      unsubRealtimeBookings();
       unsubTariffs();
       unsubDrivers();
     };
@@ -680,32 +687,43 @@ function AdminDashboard() {
 
       // 2. Actively query Firestore collections across both named (db) and default (defaultDb) databases
       const targets = [
-        { database: db, col: 'bookings' },
-        { database: defaultDb, col: 'bookings' },
-        { database: db, col: 'cab_bookings' },
-        { database: defaultDb, col: 'cab_bookings' },
-        { database: db, col: 'rides' },
-        { database: defaultDb, col: 'rides' },
+        { database: db, label: 'named-db', col: 'bookings' },
+        { database: defaultDb, label: 'default-db', col: 'bookings' },
+        { database: db, label: 'named-db', col: 'cab_bookings' },
+        { database: defaultDb, label: 'default-db', col: 'cab_bookings' },
+        { database: db, label: 'named-db', col: 'rides' },
+        { database: defaultDb, label: 'default-db', col: 'rides' },
+        { database: db, label: 'named-db', col: 'customer_bookings' },
+        { database: defaultDb, label: 'default-db', col: 'customer_bookings' },
       ];
 
       await Promise.allSettled(
-        targets.map(async ({ database, col }) => {
-          const snap = await getDocs(collection(database, col));
-          snap.forEach((docSnap) => {
-            const norm = normalizeIncomingBooking(
-              docSnap.id,
-              docSnap.data() as Record<string, unknown>
-            );
-            if (norm && !isSampleDemoBooking(norm)) {
-              byId.set(norm.bookingId, norm);
+        targets.map(async ({ database, label, col }) => {
+          try {
+            const snap = await getDocs(collection(database, col));
+            snap.forEach((docSnap) => {
+              const norm = normalizeIncomingBooking(
+                docSnap.id,
+                docSnap.data() as Record<string, unknown>,
+                `${label}/${col}`
+              );
+              if (norm && !isSampleDemoBooking(norm)) {
+                byId.set(norm.bookingId, norm);
+              }
+            });
+          } catch (err) {
+            if (label === 'named-db' && col === 'bookings') {
+              diagnoseAndLogFirestoreError(err, {
+                operation: OperationType.LIST,
+                collectionName: col,
+                databaseLabel: label,
+              });
             }
-          });
+          }
         })
       );
 
-      const syncedList = Array.from(byId.values()).sort((a, b) =>
-        b.bookingId.localeCompare(a.bookingId)
-      );
+      const syncedList = sortBookingsNewestFirst(Array.from(byId.values()));
       setBookings(syncedList);
       localStorage.setItem('safar_local_bookings', JSON.stringify(syncedList));
 
@@ -2291,9 +2309,44 @@ function AdminDashboard() {
             <section className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-white via-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-900 p-4 rounded-xl border-2 border-slate-300 dark:border-slate-800 shadow-xs">
                 <div>
-                  <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-white font-display">
-                    Owner & Dispatch Control Center
-                  </h1>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-lg sm:text-xl font-extrabold text-slate-900 dark:text-white font-display">
+                      Owner & Dispatch Control Center
+                    </h1>
+                    <span
+                      title={
+                        firestoreSyncDiag.lastErrorMessage
+                          ? `Firestore Diagnostic: ${firestoreSyncDiag.lastErrorMessage}`
+                          : `Listening in real-time to collection "${firestoreSyncDiag.activeCollection}" (${firestoreSyncDiag.activeDatabase})`
+                      }
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-extrabold border ${
+                        firestoreSyncDiag.status === 'live'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                          : firestoreSyncDiag.status === 'permission-error'
+                            ? 'bg-red-50 text-red-800 border-red-300 dark:bg-red-950/50 dark:text-red-300 dark:border-red-800'
+                            : 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          firestoreSyncDiag.status === 'live'
+                            ? 'bg-emerald-500 animate-pulse'
+                            : firestoreSyncDiag.status === 'permission-error'
+                              ? 'bg-red-500'
+                              : 'bg-amber-500 animate-pulse'
+                        }`}
+                      />
+                      <span>
+                        Firestore: {firestoreSyncDiag.activeCollection} (
+                        {firestoreSyncDiag.totalCloudDocs} cloud docs)
+                      </span>
+                      {firestoreSyncDiag.lastSyncedAt && (
+                        <span className="opacity-75">
+                          • {firestoreSyncDiag.lastSyncedAt}
+                        </span>
+                      )}
+                    </span>
+                  </div>
                   <p className="text-xs font-bold text-slate-600 dark:text-slate-400 mt-0.5">
                     Live Customer Bookings, 1-Tap WhatsApp Dispatch, Chauffeur Allotment & Certified GST Billing ({OFFICIAL_GSTIN})
                   </p>

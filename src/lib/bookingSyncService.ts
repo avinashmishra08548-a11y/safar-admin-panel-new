@@ -1,14 +1,23 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   setDoc,
   where,
   serverTimestamp,
+  FirestoreError,
 } from 'firebase/firestore';
-import { auth, db, defaultDb } from './firebase';
+import {
+  auth,
+  db,
+  defaultDb,
+  OperationType,
+  handleFirestoreError,
+} from './firebase';
 import {
   Booking,
   BLUEPRINT_CONSTRAINTS,
@@ -17,10 +26,109 @@ import {
   isSampleDemoBooking,
   normalizeIncomingBooking,
   sanitizeString,
+  sortBookingsNewestFirst,
 } from '../types/safar';
 
 const SEQ_STORAGE_KEY = 'safar_booking_seq_counter';
 export const BOOKING_BROADCAST_CHANNEL = 'safar_live_bookings_channel';
+
+/**
+ * Primary collection used by the SafarIndiaCabs Customer App, plus supported
+ * fallback collection names in case a customer client writes to an alias.
+ */
+export const PRIMARY_BOOKINGS_COLLECTION = 'bookings';
+export const FALLBACK_BOOKING_COLLECTIONS = [
+  'bookings',
+  'cab_bookings',
+  'rides',
+  'customer_bookings',
+] as const;
+
+export interface FirestoreSyncDiagnosticState {
+  status: 'connecting' | 'live' | 'permission-error' | 'index-fallback' | 'collection-mismatch-warning';
+  activeCollection: string;
+  activeDatabase: string;
+  totalCloudDocs: number;
+  lastSyncedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  collectionCounts: Record<string, number>;
+}
+
+/**
+ * Detailed console diagnostic logger for Firestore listener & fetch failures.
+ * Specifically identifies:
+ *  1. Missing Composite Index (`failed-precondition` / index URL)
+ *  2. Permission Denied (`permission-denied` / security rules / unauthenticated session)
+ *  3. Collection Mismatch or Network / Database ID issues
+ */
+export function diagnoseAndLogFirestoreError(
+  error: unknown,
+  context: {
+    operation: OperationType;
+    collectionName: string;
+    databaseLabel: string;
+    path?: string;
+  }
+): {
+  reason: 'missing-index' | 'permission-denied' | 'collection-or-network';
+  code: string;
+  message: string;
+} {
+  const fbErr = error as Partial<FirestoreError> | undefined;
+  const code = String(fbErr?.code || 'unknown');
+  const message = String(
+    fbErr?.message || (error instanceof Error ? error.message : String(error))
+  );
+  const fullPath = context.path || context.collectionName;
+
+  if (code === 'failed-precondition' || message.toLowerCase().includes('index')) {
+    const indexUrlMatch = message.match(
+      /https:\/\/console\.firebase\.google\.com[^\s)]+/
+    );
+    console.error(
+      `[SafarIndiaCabs Firestore Audit] MISSING COMPOSITE INDEX on "${context.databaseLabel}/${fullPath}".\n` +
+        `• Error Code: ${code}\n` +
+        `• Details: ${message}\n` +
+        (indexUrlMatch
+          ? `• Create Index URL: ${indexUrlMatch[0]}\n`
+          : '') +
+        `• Automatic Fallback: Switching "${context.databaseLabel}/${context.collectionName}" to unindexed real-time collection listener with client-side timestamp sorting.`
+    );
+    return { reason: 'missing-index', code, message };
+  }
+
+  if (code === 'permission-denied' || code === 'unauthenticated') {
+    const currentUser = auth.currentUser;
+    const directOp =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('safar_direct_operator_email')
+        : null;
+    console.error(
+      `[SafarIndiaCabs Firestore Audit] PERMISSION DENIED on "${context.databaseLabel}/${fullPath}".\n` +
+        `• Error Code: ${code}\n` +
+        `• Firebase Auth User: ${
+          currentUser
+            ? `${currentUser.email} (uid=${currentUser.uid}, verified=${currentUser.emailVerified})`
+            : 'null (not signed into Firebase Auth)'
+        }\n` +
+        `• Direct Operator Session: ${directOp || 'none'}\n` +
+        `• Details: ${message}\n` +
+        `• Action Hint: Verify that firestore.rules allows read/list on "/${context.collectionName}/{bookingId}" and that the same Firebase project ("gen-lang-client-0422638729") is used by both Customer App and Admin Panel.`
+    );
+    try {
+      handleFirestoreError(error, context.operation, fullPath);
+    } catch {
+      // handleFirestoreError logs structured JSON before throwing; swallow throw so UI remains interactive
+    }
+    return { reason: 'permission-denied', code, message };
+  }
+
+  console.warn(
+    `[SafarIndiaCabs Firestore Audit] Listener/Fetch warning on "${context.databaseLabel}/${fullPath}" (code=${code}): ${message}`
+  );
+  return { reason: 'collection-or-network', code, message };
+}
 
 /**
  * Normalizes any user-entered or pasted Booking ID string (e.g. "sic2604", "#SIC-2604", "2604")
@@ -54,7 +162,6 @@ export function generateUniqueBookingId(existingIds: string[] = []): string {
   let nextSeq = 2608;
   try {
     const savedSeq = Number(localStorage.getItem(SEQ_STORAGE_KEY) || '0');
-    // Extract highest numeric suffix from existing SICXXXX IDs
     let maxExisting = 2607;
     existingSet.forEach((id) => {
       const m = id.match(/^SIC(\d{4,6})$/);
@@ -96,7 +203,8 @@ export function buildFirestoreBookingPayload(
   booking: Booking,
   currentUserId?: string | null
 ) {
-  const canonicalId = normalizeBookingIdInput(booking.bookingId) || generateUniqueBookingId();
+  const canonicalId =
+    normalizeBookingIdInput(booking.bookingId) || generateUniqueBookingId();
   const cleanCustomerName = sanitizeString(
     booking.customerName || 'Safar Customer',
     BLUEPRINT_CONSTRAINTS.MAX_CUSTOMER_NAME
@@ -121,19 +229,13 @@ export function buildFirestoreBookingPayload(
     booking.dropCity || 'Outstation Destination',
     BLUEPRINT_CONSTRAINTS.MAX_CITY
   );
-  const routeSummary = sanitizeString(
-    `${cleanPickup} → ${cleanDrop}`,
-    260
-  );
+  const routeSummary = sanitizeString(`${cleanPickup} → ${cleanDrop}`, 260);
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const cleanDate = /^\d{4}-\d{2}-\d{2}$/.test(booking.pickupDate || '')
     ? booking.pickupDate
     : todayIso;
-  const cleanTime = sanitizeString(
-    booking.pickupTime || '08:30 AM',
-    12
-  );
+  const cleanTime = sanitizeString(booking.pickupTime || '08:30 AM', 12);
 
   const distanceKm = clampNumber(booking.distanceKm || 250, 1, 25000);
   const tripDays = clampNumber(booking.tripDays || 1, 1, 90);
@@ -155,7 +257,8 @@ export function buildFirestoreBookingPayload(
 
   return {
     bookingId: canonicalId,
-    customerName: cleanCustomerName.length >= 2 ? cleanCustomerName : 'Safar Customer',
+    customerName:
+      cleanCustomerName.length >= 2 ? cleanCustomerName : 'Safar Customer',
     customerPhone: cleanPhone.length >= 10 ? cleanPhone : '+91 9999999999',
     customerEmail: cleanEmail.length >= 5 ? cleanEmail : OFFICIAL_EMAIL,
     customerGstin: cleanGstin,
@@ -178,19 +281,38 @@ export function buildFirestoreBookingPayload(
     marketDiscount,
     gstAmount,
     totalFare,
-    paymentMode: booking.paymentMode === 'Full Paid' ? 'Full Paid' : '20% Advance',
+    paymentMode:
+      booking.paymentMode === 'Full Paid' ? 'Full Paid' : '20% Advance',
     advancePaid,
     balanceAmount,
     status: booking.status || 'Pending',
     workflowStage: sanitizeString(booking.workflowStage || 'Requested', 40),
-    bookingSource: sanitizeString(booking.bookingSource || 'Customer Android App', 40),
+    bookingSource: sanitizeString(
+      booking.bookingSource || 'Customer Android App',
+      40
+    ),
     specialInstructions: sanitizeString(booking.specialInstructions || '', 500),
     internalNotes: sanitizeString(booking.internalNotes || '', 500),
-    driverName: sanitizeString(booking.driverName || '', BLUEPRINT_CONSTRAINTS.MAX_DRIVER_NAME),
-    driverPhone: sanitizeString(booking.driverPhone || '', BLUEPRINT_CONSTRAINTS.MAX_PHONE),
-    vehicleNumber: sanitizeString(booking.vehicleNumber || '', BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_NUMBER),
-    vehicleModel: sanitizeString(booking.vehicleModel || '', BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_MODEL),
-    invoiceNumber: sanitizeString(booking.invoiceNumber || '', BLUEPRINT_CONSTRAINTS.MAX_INVOICE_NUMBER),
+    driverName: sanitizeString(
+      booking.driverName || '',
+      BLUEPRINT_CONSTRAINTS.MAX_DRIVER_NAME
+    ),
+    driverPhone: sanitizeString(
+      booking.driverPhone || '',
+      BLUEPRINT_CONSTRAINTS.MAX_PHONE
+    ),
+    vehicleNumber: sanitizeString(
+      booking.vehicleNumber || '',
+      BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_NUMBER
+    ),
+    vehicleModel: sanitizeString(
+      booking.vehicleModel || '',
+      BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_MODEL
+    ),
+    invoiceNumber: sanitizeString(
+      booking.invoiceNumber || '',
+      BLUEPRINT_CONSTRAINTS.MAX_INVOICE_NUMBER
+    ),
     invoiceReady: Boolean(booking.invoiceReady),
     createdBy:
       currentUserId ||
@@ -199,6 +321,244 @@ export function buildFirestoreBookingPayload(
       'customer-live-sync',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  };
+}
+
+/**
+ * Subscribes in real time (`onSnapshot`) to `'bookings'` (primary collection) and
+ * fallback customer collections (`'cab_bookings'`, `'rides'`, `'customer_bookings'`)
+ * across both the named Firestore database (`db`) and `(default)` database (`defaultDb`).
+ *
+ * Automatically populates state on document additions, modifications, and removals
+ * without requiring a manual page refresh.
+ */
+export function subscribeToRealtimeCustomerBookings(options: {
+  onBookingsSnapshot: (
+    allCloudBookings: Booking[],
+    meta: {
+      source: string;
+      addedBookings: Booking[];
+      removedBookingIds: string[];
+      isInitialLoad: boolean;
+    }
+  ) => void;
+  onDiagnosticChange?: (diag: FirestoreSyncDiagnosticState) => void;
+}): () => void {
+  // Map of `${dbLabel}/${colName}/${docId}` -> normalized Booking
+  const liveDocsByPath = new Map<string, Booking>();
+  const initializedStreams = new Set<string>();
+  const collectionCounts: Record<string, number> = {};
+
+  let diagState: FirestoreSyncDiagnosticState = {
+    status: 'connecting',
+    activeCollection: PRIMARY_BOOKINGS_COLLECTION,
+    activeDatabase: 'named-db + default-db',
+    totalCloudDocs: 0,
+    lastSyncedAt: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    collectionCounts: {},
+  };
+
+  const emitDiagnostics = (patch: Partial<FirestoreSyncDiagnosticState>) => {
+    diagState = {
+      ...diagState,
+      ...patch,
+      collectionCounts: { ...collectionCounts },
+    };
+    options.onDiagnosticChange?.(diagState);
+  };
+
+  const emitConsolidatedBookings = (
+    sourceKey: string,
+    addedBookings: Booking[],
+    removedBookingIds: string[],
+    isInitialLoad: boolean
+  ) => {
+    // Deduplicate across named-db and default-db by canonical bookingId (newest timestamp wins)
+    const byBookingId = new Map<string, Booking>();
+    liveDocsByPath.forEach((booking) => {
+      const existing = byBookingId.get(booking.bookingId);
+      if (
+        !existing ||
+        (booking.timestampMs || 0) >= (existing.timestampMs || 0)
+      ) {
+        byBookingId.set(booking.bookingId, booking);
+      }
+    });
+
+    const sortedList = sortBookingsNewestFirst(Array.from(byBookingId.values()));
+
+    emitDiagnostics({
+      status: 'live',
+      totalCloudDocs: sortedList.length,
+      lastSyncedAt: new Date().toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
+    });
+
+    options.onBookingsSnapshot(sortedList, {
+      source: sourceKey,
+      addedBookings,
+      removedBookingIds,
+      isInitialLoad,
+    });
+  };
+
+  const databases = [
+    { instance: db, label: 'named-db' },
+    { instance: defaultDb, label: 'default-db' },
+  ];
+
+  const unsubscribers: Array<() => void> = [];
+
+  databases.forEach(({ instance, label }) => {
+    FALLBACK_BOOKING_COLLECTIONS.forEach((colName) => {
+      const streamKey = `${label}/${colName}`;
+      const isPrimaryStream = colName === PRIMARY_BOOKINGS_COLLECTION;
+
+      const unsub = onSnapshot(
+        collection(instance, colName),
+        (snapshot) => {
+          const isInitialLoad = !initializedStreams.has(streamKey);
+          initializedStreams.add(streamKey);
+
+          const addedBookings: Booking[] = [];
+          const removedBookingIds: string[] = [];
+
+          // Process incremental docChanges() so newly created customer bookings are detected immediately
+          snapshot.docChanges().forEach((change) => {
+            const docKey = `${streamKey}/${change.doc.id}`;
+            if (change.type === 'removed') {
+              const prev = liveDocsByPath.get(docKey);
+              if (prev) {
+                removedBookingIds.push(prev.bookingId);
+                liveDocsByPath.delete(docKey);
+              }
+              return;
+            }
+
+            const normalized = normalizeIncomingBooking(
+              change.doc.id,
+              change.doc.data() as Record<string, unknown>,
+              streamKey
+            );
+
+            if (!normalized) return;
+
+            if (isSampleDemoBooking(normalized)) {
+              deleteDoc(doc(instance, colName, change.doc.id)).catch(() => {});
+              liveDocsByPath.delete(docKey);
+              return;
+            }
+
+            liveDocsByPath.set(docKey, normalized);
+            if (change.type === 'added' && !isInitialLoad) {
+              addedBookings.push(normalized);
+              console.info(
+                `[SafarIndiaCabs Live Sync] New customer booking received in real-time from "${streamKey}": ${normalized.bookingId} (${normalized.customerName} • ${normalized.pickupCity} → ${normalized.dropCity})`
+              );
+            }
+          });
+
+          // Also reconcile full snapshot docs to guarantee zero drift
+          let validCountInStream = 0;
+          snapshot.forEach((docSnap) => {
+            const docKey = `${streamKey}/${docSnap.id}`;
+            const normalized = normalizeIncomingBooking(
+              docSnap.id,
+              docSnap.data() as Record<string, unknown>,
+              streamKey
+            );
+            if (!normalized || isSampleDemoBooking(normalized)) {
+              liveDocsByPath.delete(docKey);
+              return;
+            }
+            validCountInStream += 1;
+            liveDocsByPath.set(docKey, normalized);
+          });
+
+          collectionCounts[streamKey] = validCountInStream;
+
+          if (!isPrimaryStream && validCountInStream > 0) {
+            console.warn(
+              `[SafarIndiaCabs Firestore Audit] Detected ${validCountInStream} customer booking document(s) in alternate collection "${streamKey}". Automatically merged into Admin Panel Control Room.`
+            );
+          }
+
+          emitConsolidatedBookings(
+            streamKey,
+            addedBookings,
+            removedBookingIds,
+            isInitialLoad
+          );
+        },
+        (error) => {
+          // Only log loud errors on primary `'bookings'` collection or permission/index errors
+          if (isPrimaryStream || label === 'named-db') {
+            const diag = diagnoseAndLogFirestoreError(error, {
+              operation: OperationType.LIST,
+              collectionName: colName,
+              databaseLabel: label,
+            });
+            emitDiagnostics({
+              status:
+                diag.reason === 'permission-denied'
+                  ? 'permission-error'
+                  : diag.reason === 'missing-index'
+                    ? 'index-fallback'
+                    : diagState.status,
+              lastErrorCode: diag.code,
+              lastErrorMessage: diag.message,
+            });
+          }
+        }
+      );
+
+      unsubscribers.push(unsub);
+    });
+  });
+
+  // Diagnostic Startup Probe: verify if 'bookings' is empty while another collection has documents
+  setTimeout(async () => {
+    try {
+      const primaryCount =
+        (collectionCounts['named-db/bookings'] || 0) +
+        (collectionCounts['default-db/bookings'] || 0);
+      const altEntries = Object.entries(collectionCounts).filter(
+        ([key, count]) => !key.endsWith('/bookings') && count > 0
+      );
+
+      if (primaryCount === 0 && altEntries.length > 0) {
+        console.warn(
+          `[SafarIndiaCabs Firestore Audit] COLLECTION MISMATCH NOTICE: Primary collection "bookings" has 0 docs, but alternate collection(s) have active docs:`,
+          Object.fromEntries(altEntries)
+        );
+        emitDiagnostics({
+          status: 'collection-mismatch-warning',
+          activeCollection: altEntries.map(([k]) => k).join(', '),
+        });
+      } else {
+        console.info(
+          `[SafarIndiaCabs Firestore Audit] Real-time listener active on collection "${PRIMARY_BOOKINGS_COLLECTION}". Snapshot counts:`,
+          { ...collectionCounts }
+        );
+      }
+    } catch {
+      // ignore diagnostic probe error
+    }
+  }, 3500);
+
+  return () => {
+    unsubscribers.forEach((unsub) => {
+      try {
+        unsub();
+      } catch {
+        // ignore
+      }
+    });
   };
 }
 
@@ -220,14 +580,18 @@ export async function persistBookingToFirestore(
   const normalizedBooking: Booking = {
     ...bookingInput,
     bookingId: canonicalId,
+    firestoreDocId: bookingInput.firestoreDocId || canonicalId,
+    timestampMs: bookingInput.timestampMs || Date.now(),
   };
 
   // 1. Update local storage & broadcast immediately for zero-latency UI
   try {
-    const merged = [
-      normalizedBooking,
-      ...existingBookings.filter((b) => b.bookingId !== canonicalId),
-    ].filter((b) => !isSampleDemoBooking(b));
+    const merged = sortBookingsNewestFirst(
+      [
+        normalizedBooking,
+        ...existingBookings.filter((b) => b.bookingId !== canonicalId),
+      ].filter((b) => !isSampleDemoBooking(b))
+    );
     localStorage.setItem('safar_local_bookings', JSON.stringify(merged));
 
     if (typeof BroadcastChannel !== 'undefined') {
@@ -247,13 +611,22 @@ export async function persistBookingToFirestore(
   );
 
   const results = await Promise.allSettled([
-    setDoc(doc(db, 'bookings', canonicalId), payload),
-    setDoc(doc(defaultDb, 'bookings', canonicalId), payload),
+    setDoc(doc(db, PRIMARY_BOOKINGS_COLLECTION, canonicalId), payload),
+    setDoc(doc(defaultDb, PRIMARY_BOOKINGS_COLLECTION, canonicalId), payload),
   ]);
 
-  if (results.some((r) => r.status === 'fulfilled')) {
-    syncedToCloud = true;
-  }
+  results.forEach((res, idx) => {
+    if (res.status === 'fulfilled') {
+      syncedToCloud = true;
+    } else if (idx === 0) {
+      diagnoseAndLogFirestoreError(res.reason, {
+        operation: OperationType.WRITE,
+        collectionName: PRIMARY_BOOKINGS_COLLECTION,
+        databaseLabel: 'named-db',
+        path: `${PRIMARY_BOOKINGS_COLLECTION}/${canonicalId}`,
+      });
+    }
+  });
 
   return {
     booking: normalizedBooking,
@@ -264,7 +637,12 @@ export async function persistBookingToFirestore(
 export interface FirestoreBookingSearchResult {
   booking: Booking | null;
   matchedCollection: string;
-  matchedBy: 'document-id' | 'field-query' | 'collection-scan' | 'local-cache' | 'not-found';
+  matchedBy:
+    | 'document-id'
+    | 'field-query'
+    | 'collection-scan'
+    | 'local-cache'
+    | 'not-found';
   latencyMs: number;
 }
 
@@ -273,7 +651,7 @@ export interface FirestoreBookingSearchResult {
  * Checks:
  *  1. Direct Document ID (`bookings/SIC2604`) in both named and default Firestore DBs
  *  2. Indexed Field Queries (`where('bookingId', '==', 'SIC2604')` & `where('booking_id', '==', 'SIC2604')`)
- *  3. Full Collection Scan across `bookings`, `cab_bookings`, and `rides` (handles auto-IDs, case differences, or partial digits)
+ *  3. Full Collection Scan across `bookings`, `cab_bookings`, `rides`, and `customer_bookings`
  *  4. Local synchronized cache fallback
  */
 export async function searchBookingByIdInFirestore(
@@ -298,13 +676,20 @@ export async function searchBookingByIdInFirestore(
     { instance: db, label: 'named-db' },
     { instance: defaultDb, label: 'default-db' },
   ];
-  const collectionsToSearch = ['bookings', 'cab_bookings', 'rides'];
+  const collectionsToSearch = [...FALLBACK_BOOKING_COLLECTIONS];
 
   // STEP 1: Direct O(1) Document Reference Lookup (`bookings/SIC2604`)
   for (const { instance, label } of databases) {
     for (const colName of collectionsToSearch) {
       const candidateDocIds = Array.from(
-        new Set([canonicalId, trimmed, trimmed.toUpperCase(), trimmed.toLowerCase()].filter(Boolean))
+        new Set(
+          [
+            canonicalId,
+            trimmed,
+            trimmed.toUpperCase(),
+            trimmed.toLowerCase(),
+          ].filter(Boolean)
+        )
       );
       for (const docId of candidateDocIds) {
         try {
@@ -312,7 +697,8 @@ export async function searchBookingByIdInFirestore(
           if (snap.exists()) {
             const norm = normalizeIncomingBooking(
               snap.id,
-              snap.data() as Record<string, unknown>
+              snap.data() as Record<string, unknown>,
+              `${label}/${colName}`
             );
             if (norm) {
               return {
@@ -323,8 +709,15 @@ export async function searchBookingByIdInFirestore(
               };
             }
           }
-        } catch {
-          // continue to next lookup strategy
+        } catch (err) {
+          if (label === 'named-db' && colName === PRIMARY_BOOKINGS_COLLECTION) {
+            diagnoseAndLogFirestoreError(err, {
+              operation: OperationType.GET,
+              collectionName: colName,
+              databaseLabel: label,
+              path: `${colName}/${docId}`,
+            });
+          }
         }
       }
     }
@@ -333,7 +726,9 @@ export async function searchBookingByIdInFirestore(
   // STEP 2: Indexed Firestore Field Query (`where('bookingId', '==', 'SIC2604')`)
   const fieldNames = ['bookingId', 'booking_id', 'referenceId', 'id'];
   const candidateValues = Array.from(
-    new Set([canonicalId, trimmed, trimmed.toUpperCase(), digitsOnly].filter(Boolean))
+    new Set(
+      [canonicalId, trimmed, trimmed.toUpperCase(), digitsOnly].filter(Boolean)
+    )
   );
 
   for (const { instance, label } of databases) {
@@ -341,13 +736,17 @@ export async function searchBookingByIdInFirestore(
       for (const field of fieldNames) {
         for (const val of candidateValues) {
           try {
-            const q = query(collection(instance, colName), where(field, '==', val));
+            const q = query(
+              collection(instance, colName),
+              where(field, '==', val)
+            );
             const snap = await getDocs(q);
             if (!snap.empty) {
               const firstDoc = snap.docs[0];
               const norm = normalizeIncomingBooking(
                 firstDoc.id,
-                firstDoc.data() as Record<string, unknown>
+                firstDoc.data() as Record<string, unknown>,
+                `${label}/${colName}`
               );
               if (norm) {
                 return {
@@ -358,8 +757,18 @@ export async function searchBookingByIdInFirestore(
                 };
               }
             }
-          } catch {
-            // continue
+          } catch (err) {
+            if (
+              label === 'named-db' &&
+              colName === PRIMARY_BOOKINGS_COLLECTION
+            ) {
+              diagnoseAndLogFirestoreError(err, {
+                operation: OperationType.LIST,
+                collectionName: colName,
+                databaseLabel: label,
+                path: `${colName}?${field}=${val}`,
+              });
+            }
           }
         }
       }
@@ -374,7 +783,8 @@ export async function searchBookingByIdInFirestore(
         for (const docSnap of snap.docs) {
           const norm = normalizeIncomingBooking(
             docSnap.id,
-            docSnap.data() as Record<string, unknown>
+            docSnap.data() as Record<string, unknown>,
+            `${label}/${colName}`
           );
           if (!norm) continue;
           const normIdUpper = norm.bookingId.toUpperCase();
@@ -408,7 +818,8 @@ export async function searchBookingByIdInFirestore(
         parsed.forEach((item: Record<string, unknown>, idx: number) => {
           const norm = normalizeIncomingBooking(
             String(item?.bookingId || item?.id || `SIC${2800 + idx}`),
-            item
+            item,
+            'local-cache'
           );
           if (norm) allLocal.push(norm);
         });
@@ -428,7 +839,6 @@ export async function searchBookingByIdInFirestore(
   });
 
   if (localMatch) {
-    // Proactively backfill to Firestore if user is signed in
     if (auth.currentUser) {
       persistBookingToFirestore(localMatch, localBookings).catch(() => {});
     }
