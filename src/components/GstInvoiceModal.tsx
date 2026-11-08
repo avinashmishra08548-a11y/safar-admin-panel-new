@@ -54,22 +54,91 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({
     ? booking.bookingId
     : `SIC-${numericRef}`;
 
-  const tripHireCharges = Math.max(
+  const days = Math.max(1, Number(booking.tripDays || 1));
+  const durationDisplay =
+    booking.tripType === 'Round Trip Outstation' && days === 1
+      ? '1 Day (Same Day Return)'
+      : `${days} Day(s)`;
+
+  const baseCabFare = Math.max(0, Number(booking.baseFare || 0));
+  const driverAllowanceAmt = Math.max(0, Number(booking.driverAllowance || 0));
+  const highwayTollAmt = Math.max(0, Number(booking.tollTax || 0));
+  const statePermitAmt = Math.max(0, Number(booking.stateTax || 0));
+  const nightChargeAmt = Math.max(0, Number(booking.nightCharges || 0));
+  const discountAmt = Math.max(0, Number(booking.marketDiscount || 0));
+
+  const taxableValue = Math.max(
     0,
-    booking.baseFare +
-      booking.driverAllowance +
-      booking.nightCharges -
-      booking.marketDiscount
+    baseCabFare +
+      driverAllowanceAmt +
+      highwayTollAmt +
+      statePermitAmt +
+      nightChargeAmt -
+      discountAmt
   );
-  const tollAndPermitCharges = Math.max(0, booking.stateTax);
-  const taxableValue = tripHireCharges + tollAndPermitCharges;
   const cgst = Math.round(booking.gstAmount / 2);
   const sgst = booking.gstAmount - cgst;
-  const grandTotal = booking.totalFare;
+  const grandTotal = booking.totalFare || taxableValue + booking.gstAmount;
   const settledAmount = Math.min(grandTotal, Math.max(0, booking.advancePaid));
   const balanceDue = Math.max(0, grandTotal - settledAmount);
   const isPaidInFull = balanceDue === 0;
   const signTimestamp = getFormattedDigitalSignTimestamp(booking.pickupDate);
+
+  const itemizedRows: Array<{
+    sno: number;
+    description: string;
+    sac: string;
+    amount: string;
+    isDiscount?: boolean;
+  }> = [
+    {
+      sno: 1,
+      description: `Cab Hire / Base Trip Charges (${booking.tripType}${
+        booking.tripType === 'Round Trip Outstation' && days === 1
+          ? ' • Same Day Return'
+          : ''
+      } — ${booking.pickupCity} to ${booking.dropCity} · ${booking.distanceKm} KM @ ₹${booking.perKmRate}/KM)`,
+      sac: OFFICIAL_SAC_CODE,
+      amount: formatINRDecimal(baseCabFare),
+    },
+    {
+      sno: 2,
+      description: `Chauffeur / Driver Allowance (Bata — ${durationDisplay})`,
+      sac: OFFICIAL_SAC_CODE,
+      amount: formatINRDecimal(driverAllowanceAmt),
+    },
+    {
+      sno: 3,
+      description: 'Highway / Fastag Toll Tax Charges',
+      sac: OFFICIAL_SAC_CODE,
+      amount: formatINRDecimal(highwayTollAmt),
+    },
+    {
+      sno: 4,
+      description: 'Inter-State Entry Permit & State Tax Charges',
+      sac: OFFICIAL_SAC_CODE,
+      amount: formatINRDecimal(statePermitAmt),
+    },
+  ];
+
+  if (nightChargeAmt > 0) {
+    itemizedRows.push({
+      sno: itemizedRows.length + 1,
+      description: 'Night Driving Allowance Charges',
+      sac: OFFICIAL_SAC_CODE,
+      amount: formatINRDecimal(nightChargeAmt),
+    });
+  }
+
+  if (discountAmt > 0) {
+    itemizedRows.push({
+      sno: itemizedRows.length + 1,
+      description: 'Less: Special Promotional / Market Rebate Discount',
+      sac: OFFICIAL_SAC_CODE,
+      amount: `- ${formatINRDecimal(discountAmt)}`,
+      isDiscount: true,
+    });
+  }
 
   const handlePrint = () => {
     window.print();
@@ -247,9 +316,12 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({
                 <div className="text-slate-700">
                   Travel Date: {booking.pickupDate} at {booking.pickupTime}
                 </div>
-                <div className="text-slate-700">
+                <div className="text-slate-700 font-semibold">
                   Total Distance: {booking.distanceKm} KM &nbsp;|&nbsp;
-                  Duration: {booking.tripDays} Day(s)
+                  Duration:{' '}
+                  <span className="font-extrabold text-slate-900">
+                    {durationDisplay}
+                  </span>
                 </div>
               </div>
             </div>
@@ -271,7 +343,7 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({
             </div>
           </div>
 
-          {/* 4-Column Itemized Fare Table */}
+          {/* 4-Column Itemized Fare Breakup Table */}
           <div className="border border-slate-300 rounded-xl overflow-hidden">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -280,7 +352,7 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({
                     S.NO
                   </th>
                   <th className="py-2.5 px-3 text-left font-extrabold">
-                    DESCRIPTION OF CAB / TRAVEL SERVICE
+                    DESCRIPTION OF CAB / TRAVEL SERVICE (ITEMIZED BREAKUP)
                   </th>
                   <th className="py-2.5 px-3 text-center font-extrabold w-24">
                     SAC CODE
@@ -291,38 +363,30 @@ export const GstInvoiceModal: React.FC<GstInvoiceModalProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-slate-900">
-                <tr>
-                  <td className="py-2.5 px-3">1</td>
-                  <td className="py-2.5 px-3">
-                    Cab Hire / Trip Charges ({booking.tripType} —{' '}
-                    {booking.pickupCity} to {booking.dropCity})
+                {itemizedRows.map((row) => (
+                  <tr
+                    key={row.sno}
+                    className={
+                      row.isDiscount ? 'bg-emerald-50/40 text-emerald-800' : ''
+                    }
+                  >
+                    <td className="py-2 px-3">{row.sno}</td>
+                    <td className="py-2 px-3 font-medium">{row.description}</td>
+                    <td className="py-2 px-3 text-center font-mono">
+                      {row.sac}
+                    </td>
+                    <td className="py-2 px-3.5 text-right font-extrabold font-mono">
+                      {row.amount}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-50/90">
+                  <td className="py-2 px-3" />
+                  <td className="py-2 px-3 font-extrabold">
+                    Taxable Service Value (Total Breakup Sub-Total)
                   </td>
-                  <td className="py-2.5 px-3 text-center font-mono">
-                    {OFFICIAL_SAC_CODE}
-                  </td>
-                  <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
-                    {formatINRDecimal(tripHireCharges)}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-2.5 px-3">2</td>
-                  <td className="py-2.5 px-3">
-                    Highway Toll Tax & Inter-State Entry Permit Charges
-                  </td>
-                  <td className="py-2.5 px-3 text-center font-mono">
-                    {OFFICIAL_SAC_CODE}
-                  </td>
-                  <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
-                    {formatINRDecimal(tollAndPermitCharges)}
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-2.5 px-3" />
-                  <td className="py-2.5 px-3 font-extrabold">
-                    Taxable Service Value
-                  </td>
-                  <td className="py-2.5 px-3" />
-                  <td className="py-2.5 px-3.5 text-right font-extrabold font-mono">
+                  <td className="py-2 px-3" />
+                  <td className="py-2 px-3.5 text-right font-extrabold font-mono">
                     {formatINRDecimal(taxableValue)}
                   </td>
                 </tr>

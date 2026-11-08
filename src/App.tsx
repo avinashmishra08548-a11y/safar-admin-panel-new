@@ -17,13 +17,13 @@ import {
   updateDoc,
   deleteDoc,
   onSnapshot,
-  query,
-  where,
+  getDocs,
   serverTimestamp,
 } from 'firebase/firestore';
 import {
   auth,
   db,
+  defaultDb,
   OperationType,
   handleFirestoreError,
 } from './lib/firebase';
@@ -46,6 +46,7 @@ import {
   formatINR,
   isSampleDemoBooking,
   isSampleDemoDriver,
+  normalizeIncomingBooking,
 } from './types/safar';
 import { LoginScreen } from './components/LoginScreen';
 import { AssignDriverModal } from './components/AssignDriverModal';
@@ -365,6 +366,29 @@ function AdminDashboard() {
   const [myRidesPreviewTarget, setMyRidesPreviewTarget] =
     useState<Booking | null>(null);
   const [showAddDriverModal, setShowAddDriverModal] = useState(false);
+  const [showSyncIncomingModal, setShowSyncIncomingModal] = useState(false);
+  const [syncRawText, setSyncRawText] = useState('');
+  const [syncBookingDraft, setSyncBookingDraft] = useState({
+    bookingId: `SIC${Math.floor(3000 + Math.random() * 6000)}`,
+    customerName: '',
+    customerPhone: '+91 ',
+    pickupCity: 'New Delhi',
+    dropCity: '',
+    pickupDate: new Date().toISOString().slice(0, 10),
+    pickupTime: '08:30 AM',
+    tripType: 'Round Trip Outstation' as Booking['tripType'],
+    vehicleCategory: 'Sedan' as Booking['vehicleCategory'],
+    distanceKm: 300,
+    tripDays: 1,
+    sameDayReturn: true,
+    perKmRate: 14,
+    baseFare: 4200,
+    driverAllowance: 300,
+    tollTax: 450,
+    stateTax: 350,
+    marketDiscount: 200,
+    advancePaid: 1000,
+  });
 
   // Tariff Editor Draft State
   const [tariffDrafts, setTariffDrafts] = useState<Record<string, TariffPlan>>(
@@ -381,11 +405,11 @@ function AdminDashboard() {
   const [globalDiscountToggleBusy, setGlobalDiscountToggleBusy] =
     useState(false);
 
-  // Live Outstation Fare & Commission Simulator
+  // Live Outstation Fare & Commission Simulator (Default 1 Day Same-Day Return)
   const [simCategory, setSimCategory] =
     useState<TariffPlan['categoryId']>('sedan');
-  const [simDistanceKm, setSimDistanceKm] = useState(460);
-  const [simDays, setSimDays] = useState(2);
+  const [simDistanceKm, setSimDistanceKm] = useState(300);
+  const [simDays, setSimDays] = useState(1);
   const [simTripMode, setSimTripMode] = useState<'round' | 'oneway'>('round');
   const [simCommissionPct, setSimCommissionPct] = useState(12);
   const [simQuoteRoute, setSimQuoteRoute] = useState('New Delhi → Chandigarh');
@@ -415,46 +439,54 @@ function AdminDashboard() {
     return () => unsub();
   }, []);
 
-  // Real-time Firestore listeners when authenticated
+  // Real-time Firestore listeners (attaches for both Firebase Auth & Direct Operator Console sessions, across both named and default DBs)
   useEffect(() => {
-    if (!authReady || !user || !user.emailVerified) {
+    if (!authReady || (!user && !directOperatorEmail)) {
       setDataLoading(false);
       return;
     }
 
-    const isBootstrapped = user.email === 'avinashmishra08548@gmail.com';
+    const mergeAndSaveBookings = (incomingDocs: Booking[]) => {
+      setBookings((prev) => {
+        const byId = new Map<string, Booking>();
+        // Keep existing local real bookings so nothing is lost
+        prev.forEach((b) => {
+          if (b && b.bookingId && !isSampleDemoBooking(b)) {
+            byId.set(b.bookingId, b);
+          }
+        });
+        // Merge incoming Firestore bookings
+        incomingDocs.forEach((b) => {
+          if (b && b.bookingId && !isSampleDemoBooking(b)) {
+            byId.set(b.bookingId, b);
+          }
+        });
+        const merged = Array.from(byId.values()).sort((a, b) =>
+          b.bookingId.localeCompare(a.bookingId)
+        );
+        localStorage.setItem('safar_local_bookings', JSON.stringify(merged));
+        return merged;
+      });
+      setDataLoading(false);
+    };
 
-    const bookingsRef = isBootstrapped
-      ? collection(db, 'bookings')
-      : query(collection(db, 'bookings'), where('createdBy', '==', user.uid));
-
-    const tariffsRef = isBootstrapped
-      ? collection(db, 'tariffs')
-      : query(collection(db, 'tariffs'), where('createdBy', '==', user.uid));
-
-    const driversRef = isBootstrapped
-      ? collection(db, 'drivers')
-      : query(collection(db, 'drivers'), where('createdBy', '==', user.uid));
-
-    const unsubBookings = onSnapshot(
-      bookingsRef,
+    const unsubBookingsNamed = onSnapshot(
+      collection(db, 'bookings'),
       (snapshot) => {
         const list: Booking[] = [];
         snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as Booking;
-          if (isSampleDemoBooking(data)) {
-            // Automatically remove legacy sample/example bookings from Firestore
-            deleteDoc(doc(db, 'bookings', data.bookingId)).catch(() => {
-              // ignore cleanup permission warning
-            });
+          const normalized = normalizeIncomingBooking(
+            docSnap.id,
+            docSnap.data() as Record<string, unknown>
+          );
+          if (!normalized) return;
+          if (isSampleDemoBooking(normalized)) {
+            deleteDoc(doc(db, 'bookings', docSnap.id)).catch(() => {});
           } else {
-            list.push(data);
+            list.push(normalized);
           }
         });
-        list.sort((a, b) => b.bookingId.localeCompare(a.bookingId));
-        setBookings(list);
-        localStorage.setItem('safar_local_bookings', JSON.stringify(list));
-        setDataLoading(false);
+        mergeAndSaveBookings(list);
       },
       (error) => {
         setDataLoading(false);
@@ -462,8 +494,31 @@ function AdminDashboard() {
       }
     );
 
+    const unsubBookingsDefault = onSnapshot(
+      collection(defaultDb, 'bookings'),
+      (snapshot) => {
+        if (snapshot.empty) return;
+        const list: Booking[] = [];
+        snapshot.forEach((docSnap) => {
+          const normalized = normalizeIncomingBooking(
+            docSnap.id,
+            docSnap.data() as Record<string, unknown>
+          );
+          if (normalized && !isSampleDemoBooking(normalized)) {
+            list.push(normalized);
+          }
+        });
+        if (list.length > 0) {
+          mergeAndSaveBookings(list);
+        }
+      },
+      () => {
+        // defaultDb may not have rules or may be empty; ignore quietly
+      }
+    );
+
     const unsubTariffs = onSnapshot(
-      tariffsRef,
+      collection(db, 'tariffs'),
       (snapshot) => {
         if (!snapshot.empty) {
           const list: TariffPlan[] = [];
@@ -495,16 +550,13 @@ function AdminDashboard() {
     );
 
     const unsubDrivers = onSnapshot(
-      driversRef,
+      collection(db, 'drivers'),
       (snapshot) => {
         const list: FleetDriver[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as FleetDriver;
           if (isSampleDemoDriver(data)) {
-            // Automatically remove legacy sample drivers (DRV101-DRV104) from Firestore
-            deleteDoc(doc(db, 'drivers', data.driverId)).catch(() => {
-              // ignore cleanup permission warning
-            });
+            deleteDoc(doc(db, 'drivers', data.driverId)).catch(() => {});
           } else {
             list.push(data);
           }
@@ -519,11 +571,12 @@ function AdminDashboard() {
     );
 
     return () => {
-      unsubBookings();
+      unsubBookingsNamed();
+      unsubBookingsDefault();
       unsubTariffs();
       unsubDrivers();
     };
-  }, [authReady, user]);
+  }, [authReady, user, directOperatorEmail]);
 
   // Cross-tab & customer portal real-time booking sync listener
   useEffect(() => {
@@ -532,9 +585,17 @@ function AdminDashboard() {
         try {
           const parsed = JSON.parse(e.newValue);
           if (Array.isArray(parsed)) {
-            const realOnly = parsed.filter(
-              (b: Booking) => b && !isSampleDemoBooking(b)
-            );
+            const realOnly: Booking[] = [];
+            parsed.forEach((b: Record<string, unknown>, idx: number) => {
+              if (!b) return;
+              const norm = normalizeIncomingBooking(
+                String(b.bookingId || b.id || `SIC${2700 + idx}`),
+                b
+              );
+              if (norm && !isSampleDemoBooking(norm)) {
+                realOnly.push(norm);
+              }
+            });
             setBookings(realOnly);
           }
         } catch {
@@ -546,19 +607,78 @@ function AdminDashboard() {
     return () => window.removeEventListener('storage', handleStorageSync);
   }, []);
 
-  // Refresh live bookings & sync tariffs/drivers without adding any sample bookings
+  // Actively fetch & sync live customer bookings from both named & default Firestore DBs + local storage
   const handleSeedInitialOperationsData = async () => {
     setSeedingData(true);
     try {
-      const cleanedBookings = bookings.filter((b) => !isSampleDemoBooking(b));
-      setBookings(cleanedBookings);
-      localStorage.setItem(
-        'safar_local_bookings',
-        JSON.stringify(cleanedBookings)
+      const byId = new Map<string, Booking>();
+
+      // 1. Preserve current real bookings in memory & localStorage
+      bookings.forEach((b) => {
+        if (b && b.bookingId && !isSampleDemoBooking(b)) {
+          const norm = normalizeIncomingBooking(
+            b.bookingId,
+            b as unknown as Record<string, unknown>
+          );
+          if (norm) {
+            byId.set(b.bookingId, norm);
+          }
+        }
+      });
+
+      const localRaw = localStorage.getItem('safar_local_bookings');
+      if (localRaw) {
+        try {
+          const parsed = JSON.parse(localRaw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((item: Record<string, unknown>, idx: number) => {
+              const norm = normalizeIncomingBooking(
+                String(item.bookingId || item.id || `SIC${2800 + idx}`),
+                item
+              );
+              if (norm && !isSampleDemoBooking(norm)) {
+                byId.set(norm.bookingId, norm);
+              }
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 2. Actively query Firestore collections across both named (db) and default (defaultDb) databases
+      const targets = [
+        { database: db, col: 'bookings' },
+        { database: defaultDb, col: 'bookings' },
+        { database: db, col: 'cab_bookings' },
+        { database: defaultDb, col: 'cab_bookings' },
+        { database: db, col: 'rides' },
+        { database: defaultDb, col: 'rides' },
+      ];
+
+      await Promise.allSettled(
+        targets.map(async ({ database, col }) => {
+          const snap = await getDocs(collection(database, col));
+          snap.forEach((docSnap) => {
+            const norm = normalizeIncomingBooking(
+              docSnap.id,
+              docSnap.data() as Record<string, unknown>
+            );
+            if (norm && !isSampleDemoBooking(norm)) {
+              byId.set(norm.bookingId, norm);
+            }
+          });
+        })
       );
 
+      const syncedList = Array.from(byId.values()).sort((a, b) =>
+        b.bookingId.localeCompare(a.bookingId)
+      );
+      setBookings(syncedList);
+      localStorage.setItem('safar_local_bookings', JSON.stringify(syncedList));
+
       showToast(
-        `Live Bookings synced (${cleanedBookings.length} real customer booking(s) active).`
+        `Live Bookings synced (${syncedList.length} real customer booking(s) active in Control Room).`
       );
     } finally {
       setSeedingData(false);
@@ -1570,6 +1690,15 @@ function AdminDashboard() {
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setShowSyncIncomingModal(true)}
+            className="px-3 py-2 text-xs font-extrabold text-slate-900 dark:text-amber-300 bg-slate-200/85 dark:bg-slate-800 hover:bg-slate-300 border border-slate-300 dark:border-slate-700 rounded-xl transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Smartphone className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+            <span className="hidden sm:inline">Sync Website / WhatsApp Ride</span>
+            <span className="sm:hidden">Sync Ride</span>
+          </button>
+          <button
+            type="button"
             onClick={handleSeedInitialOperationsData}
             disabled={seedingData}
             className="px-3.5 sm:px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
@@ -2259,6 +2388,13 @@ function AdminDashboard() {
                       className="px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer"
                     >
                       Sync Live Bookings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowSyncIncomingModal(true)}
+                      className="px-4 py-2 text-xs font-extrabold text-white bg-slate-900 hover:bg-slate-800 rounded-xl cursor-pointer"
+                    >
+                      Sync Incoming Website / WhatsApp Booking
                     </button>
                   </div>
                 </div>
@@ -3045,16 +3181,29 @@ function AdminDashboard() {
 
                     <div>
                       <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
-                        Days
+                        Days (1 = Same Day)
                       </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={simDays}
-                        onChange={(e) => setSimDays(Number(e.target.value))}
-                        className="w-full px-2.5 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
-                      />
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSimDays(1)}
+                          className={`px-2 py-2 rounded-lg font-extrabold text-[11px] cursor-pointer border ${
+                            simDays === 1
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          1d
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={30}
+                          value={simDays}
+                          onChange={(e) => setSimDays(Math.max(1, Number(e.target.value) || 1))}
+                          className="w-full px-2 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100"
+                        />
+                      </div>
                     </div>
 
                     <div>
@@ -3078,13 +3227,17 @@ function AdminDashboard() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="space-y-1 text-slate-700 dark:text-slate-300 font-bold">
                         <div>
-                          Base ({simulatedQuote.billableKm} KM @ ₹
+                          1. Base Cab ({simulatedQuote.billableKm} KM @ ₹
                           {simulatedQuote.rate}):{' '}
                           {formatINR(simulatedQuote.baseFare)}
                         </div>
                         <div>
-                          Chauffeur Allowance + Toll:{' '}
-                          {formatINR(simulatedQuote.da + simulatedQuote.tax)}
+                          2. Driver Allowance ({simDays}d):{' '}
+                          {formatINR(simulatedQuote.da)}
+                        </div>
+                        <div>
+                          3. State Permit / Toll Tax:{' '}
+                          {formatINR(simulatedQuote.tax)}
                         </div>
                         <div>
                           Safar Commission ({simCommissionPct}%):{' '}
@@ -3837,6 +3990,454 @@ function AdminDashboard() {
           onClose={() => setShowAddDriverModal(false)}
           onAddDriver={handleAddFleetDriver}
         />
+      )}
+
+      {showSyncIncomingModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl my-6">
+            <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-slate-100 via-white to-slate-200 dark:from-slate-900 dark:to-slate-900 border-b-2 border-slate-300 dark:border-slate-800">
+              <div>
+                <h2 className="text-base font-extrabold text-slate-900 dark:text-white font-display">
+                  Sync Incoming Customer Booking (Website / WhatsApp / App)
+                </h2>
+                <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                  Sync a live customer booking from safarindiacabs.com or WhatsApp notification directly into Control Room & Firestore
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSyncIncomingModal(false)}
+                className="p-1.5 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
+              {/* Paste WhatsApp / Website Booking Alert to Auto-Parse */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-extrabold text-slate-800 dark:text-slate-200">
+                    Option A: Paste WhatsApp / Website Booking Confirmation Text (Optional)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!syncRawText.trim()) return;
+                      const txt = syncRawText;
+                      const idMatch = txt.match(/SIC[-_]?(\d{4,8})/i);
+                      const phoneMatch = txt.match(/(?:\+?91[\s-]?)?([6-9]\d{9})/);
+                      const nameMatch = txt.match(/(?:Name|Customer|Passenger|Traveller)\s*[:\-]\s*([^\n\r*]+)/i);
+                      const pickupMatch = txt.match(/(?:Pickup|From|Origin)\s*[:\-]\s*([^\n\r*→]+)/i);
+                      const dropMatch = txt.match(/(?:Drop|To|Destination)\s*[:\-]\s*([^\n\r*]+)/i);
+                      const kmMatch = txt.match(/(\d{2,5})\s*KM/i);
+                      const fareMatch = txt.match(/(?:Total|Fare|Amount)\s*[:\-₹Rs.\s]*([\d,]+)/i);
+
+                      setSyncBookingDraft((prev) => ({
+                        ...prev,
+                        bookingId: idMatch ? `SIC${idMatch[1]}` : prev.bookingId,
+                        customerName: nameMatch ? nameMatch[1].trim() : prev.customerName,
+                        customerPhone: phoneMatch ? `+91 ${phoneMatch[1]}` : prev.customerPhone,
+                        pickupCity: pickupMatch ? pickupMatch[1].trim() : prev.pickupCity,
+                        dropCity: dropMatch ? dropMatch[1].trim() : prev.dropCity,
+                        distanceKm: kmMatch ? Number(kmMatch[1]) : prev.distanceKm,
+                        baseFare: fareMatch
+                          ? Number(fareMatch[1].replace(/,/g, ''))
+                          : prev.baseFare,
+                      }));
+                      showToast('Extracted customer booking details from text.');
+                    }}
+                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold rounded-lg cursor-pointer shrink-0"
+                  >
+                    Auto-Fill Details
+                  </button>
+                </div>
+                <textarea
+                  rows={2}
+                  value={syncRawText}
+                  onChange={(e) => setSyncRawText(e.target.value)}
+                  placeholder="Paste WhatsApp booking message or website alert here to auto-fill customer name, phone, route, and fare..."
+                  className="w-full px-3 py-2 font-medium bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              {/* Customer & Route Details */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Booking ID
+                  </label>
+                  <input
+                    type="text"
+                    value={syncBookingDraft.bookingId}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        bookingId: e.target.value.toUpperCase(),
+                      }))
+                    }
+                    className="w-full px-3 py-2 font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Customer Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={syncBookingDraft.customerName}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        customerName: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Rohit Kumar"
+                    className="w-full px-3 py-2 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Customer Mobile *
+                  </label>
+                  <input
+                    type="tel"
+                    value={syncBookingDraft.customerPhone}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        customerPhone: e.target.value,
+                      }))
+                    }
+                    placeholder="+91 9990710871"
+                    className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Pickup City / Address *
+                  </label>
+                  <input
+                    type="text"
+                    value={syncBookingDraft.pickupCity}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        pickupCity: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Nathupura Burari 110084"
+                    className="w-full px-3 py-2 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Drop City / Destination *
+                  </label>
+                  <input
+                    type="text"
+                    value={syncBookingDraft.dropCity}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        dropCity: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Dera Bassi Punjab"
+                    className="w-full px-3 py-2 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Trip Type
+                  </label>
+                  <select
+                    value={syncBookingDraft.tripType}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        tripType: e.target.value as Booking['tripType'],
+                      }))
+                    }
+                    className="w-full px-3 py-2 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  >
+                    <option value="Round Trip Outstation">Round Trip Outstation</option>
+                    <option value="One Way Outstation">One Way Outstation</option>
+                    <option value="Local 8Hr/80Km">Local 8Hr/80Km</option>
+                    <option value="Airport Transfer">Airport Transfer</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Cab Category
+                  </label>
+                  <select
+                    value={syncBookingDraft.vehicleCategory}
+                    onChange={(e) =>
+                      setSyncBookingDraft((p) => ({
+                        ...p,
+                        vehicleCategory: e.target.value as Booking['vehicleCategory'],
+                      }))
+                    }
+                    className="w-full px-3 py-2 font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                  >
+                    <option value="Sedan">Sedan</option>
+                    <option value="SUV">SUV</option>
+                    <option value="Innova Crysta">Innova Crysta</option>
+                    <option value="Hatchback">Hatchback</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Pickup Date & Time
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="date"
+                      value={syncBookingDraft.pickupDate}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          pickupDate: e.target.value,
+                        }))
+                      }
+                      className="w-full px-2 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Duration (Same Day = 1d)
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          tripDays: 1,
+                          sameDayReturn: true,
+                        }))
+                      }
+                      className={`px-2.5 py-2 rounded-xl font-extrabold cursor-pointer border ${
+                        syncBookingDraft.tripDays === 1
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300'
+                      }`}
+                    >
+                      Same Day (1d)
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={syncBookingDraft.tripDays}
+                      onChange={(e) => {
+                        const d = Math.max(1, Number(e.target.value) || 1);
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          tripDays: d,
+                          sameDayReturn: d === 1,
+                        }));
+                      }}
+                      className="w-full px-2.5 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Separate Itemized Fare Breakup */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="font-extrabold text-slate-800 dark:text-slate-200">
+                  Itemized Fare Breakup (Shown Separately on Bill & Control Room)
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      Distance (KM)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.distanceKm}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          distanceKm: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      1. Base Cab Fare (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.baseFare}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          baseFare: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      2. Driver Allowance (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.driverAllowance}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          driverAllowance: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      3. Highway Toll Tax (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.tollTax}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          tollTax: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      4. State Permit Tax (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.stateTax}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          stateTax: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-600 dark:text-slate-400 mb-1">
+                      Advance Received (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={syncBookingDraft.advancePaid}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          advancePaid: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 font-mono font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSyncIncomingModal(false)}
+                  className="px-4 py-2 text-xs font-extrabold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!syncBookingDraft.customerName.trim() || !syncBookingDraft.dropCity.trim()) {
+                      showToast('Please enter Customer Name and Drop City to sync booking.');
+                      return;
+                    }
+                    const cleanId = syncBookingDraft.bookingId.startsWith('SIC')
+                      ? syncBookingDraft.bookingId
+                      : `SIC${syncBookingDraft.bookingId.replace(/\D/g, '') || Math.floor(3000 + Math.random() * 6000)}`;
+                    const normalized = normalizeIncomingBooking(cleanId, {
+                      ...syncBookingDraft,
+                      bookingId: cleanId,
+                      status: 'Pending',
+                      bookingSource: 'Website',
+                      createdBy: user?.uid || 'website-live-sync',
+                    });
+                    if (!normalized) return;
+
+                    const nextList = [
+                      normalized,
+                      ...bookings.filter((b) => b.bookingId !== normalized.bookingId),
+                    ];
+                    setBookings(nextList);
+                    localStorage.setItem('safar_local_bookings', JSON.stringify(nextList));
+                    setShowSyncIncomingModal(false);
+                    showToast(`Synced live customer booking ${normalized.bookingId} (${normalized.customerName}) to Control Room.`);
+
+                    if (user) {
+                      try {
+                        await setDoc(doc(db, 'bookings', normalized.bookingId), {
+                          bookingId: normalized.bookingId,
+                          customerName: normalized.customerName,
+                          customerPhone: normalized.customerPhone,
+                          customerEmail: normalized.customerEmail,
+                          customerGstin: normalized.customerGstin,
+                          tripType: normalized.tripType,
+                          pickupCity: normalized.pickupCity,
+                          dropCity: normalized.dropCity,
+                          pickupDate: normalized.pickupDate,
+                          pickupTime: normalized.pickupTime,
+                          vehicleCategory: normalized.vehicleCategory,
+                          distanceKm: normalized.distanceKm,
+                          tripDays: normalized.tripDays,
+                          perKmRate: normalized.perKmRate,
+                          baseFare: normalized.baseFare,
+                          driverAllowance: normalized.driverAllowance,
+                          stateTax: normalized.stateTax + (normalized.tollTax || 0),
+                          nightCharges: normalized.nightCharges,
+                          marketDiscount: normalized.marketDiscount,
+                          gstAmount: normalized.gstAmount,
+                          totalFare: normalized.totalFare,
+                          paymentMode: normalized.paymentMode,
+                          advancePaid: normalized.advancePaid,
+                          balanceAmount: normalized.balanceAmount,
+                          status: normalized.status,
+                          driverName: normalized.driverName,
+                          driverPhone: normalized.driverPhone,
+                          vehicleNumber: normalized.vehicleNumber,
+                          vehicleModel: normalized.vehicleModel,
+                          invoiceNumber: normalized.invoiceNumber,
+                          invoiceReady: normalized.invoiceReady,
+                          createdBy: user.uid,
+                          createdAt: serverTimestamp(),
+                          updatedAt: serverTimestamp(),
+                        });
+                      } catch {
+                        // Already saved locally and in state
+                      }
+                    }
+                  }}
+                  className="px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer shadow-xs"
+                >
+                  Sync Booking to Control Room
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

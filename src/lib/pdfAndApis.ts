@@ -441,8 +441,11 @@ export async function calculateOlaRouteDistance(
     ? oneWayKm * 2
     : oneWayKm;
 
+  // Default Round Trip to 1 Day (Same Day Return) unless round-trip distance exceeds 600 KM
   const recommendedDays = isRoundTrip
-    ? Math.max(1, Math.ceil(recommendedTripDistanceKm / 300))
+    ? recommendedTripDistanceKm <= 600
+      ? 1
+      : Math.max(1, Math.ceil(recommendedTripDistanceKm / 300))
     : 1;
 
   const hrs = Math.floor(durationMins / 60);
@@ -825,6 +828,7 @@ export async function loadCleanSignaturePngDataUrl(url: string): Promise<string 
 
 export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
   const numericRef = b.bookingId.replace(/\D/g, '') || '2607';
+  const days = Math.max(1, Number(b.tripDays || 1));
   return {
     invoiceNumber: b.invoiceNumber || `SIC-2026-${numericRef}`,
     bookingId: b.bookingId.startsWith('SIC-')
@@ -839,6 +843,10 @@ export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
       ? `${b.customerName} Corporate A/C`
       : '',
     tripType: b.tripType,
+    sameDayReturn:
+      b.sameDayReturn !== undefined
+        ? b.sameDayReturn
+        : b.tripType === 'Round Trip Outstation' && days === 1,
     pickupCity: b.pickupCity,
     dropCity: b.dropCity,
     pickupDate: b.pickupDate,
@@ -854,13 +862,14 @@ export function bookingToStandardBillDraft(b: Booking): CustomBillDraft {
         ? 'Toyota Innova Crysta 7+1'
         : 'Maruti WagonR / Celerio'),
     vehicleNumber: b.vehicleNumber || 'HR55BE6324',
-    driverName: b.driverName || 'NITISH KUMAR',
-    driverPhone: b.driverPhone || '+91 9818944089',
+    driverName: b.driverName || 'Assigned Chauffeur',
+    driverPhone: b.driverPhone || OFFICIAL_HELPLINE,
     distanceKm: b.distanceKm,
-    tripDays: b.tripDays,
+    tripDays: days,
     perKmRate: b.perKmRate,
     baseFare: b.baseFare,
     driverAllowance: b.driverAllowance,
+    tollTax: b.tollTax ?? 0,
     stateTax: b.stateTax,
     nightCharges: b.nightCharges,
     parkingTollExtra: 0,
@@ -886,19 +895,25 @@ export async function generateInvoicePdfDocument(
     format: 'a4',
   });
 
-  // Compute fare breakdown matching the uploaded invoice format
-  const tripHireCharges = Math.max(
+  // Compute itemized fare breakup so each charge is shown transparently on its own row
+  const baseCabFare = Math.max(0, Number(draft.baseFare || 0));
+  const driverAllowanceAmt = Math.max(0, Number(draft.driverAllowance || 0));
+  const highwayTollAmt = Math.max(0, Number(draft.tollTax || 0));
+  const statePermitAmt = Math.max(0, Number(draft.stateTax || 0));
+  const nightChargeAmt = Math.max(0, Number(draft.nightCharges || 0));
+  const parkingExtraAmt = Math.max(0, Number(draft.parkingTollExtra || 0));
+  const discountAmt = Math.max(0, Number(draft.marketDiscount || 0));
+
+  const taxableAmount = Math.max(
     0,
-    Number(draft.baseFare) +
-      Number(draft.driverAllowance) +
-      Number(draft.nightCharges) -
-      Number(draft.marketDiscount)
+    baseCabFare +
+      driverAllowanceAmt +
+      highwayTollAmt +
+      statePermitAmt +
+      nightChargeAmt +
+      parkingExtraAmt -
+      discountAmt
   );
-  const tollAndPermitCharges = Math.max(
-    0,
-    Number(draft.stateTax) + Number(draft.parkingTollExtra)
-  );
-  const taxableAmount = tripHireCharges + tollAndPermitCharges;
   const gstAmount = draft.includeGst
     ? Math.round(taxableAmount * (Number(draft.gstPercentage) / 100))
     : 0;
@@ -1078,46 +1093,51 @@ export async function generateInvoicePdfDocument(
     110,
     cardTopY + 27.1
   );
+  const durationLabel =
+    draft.tripType === 'Round Trip Outstation' && Number(draft.tripDays) === 1
+      ? '1 Day (Same Day Return)'
+      : `${draft.tripDays} Day(s)`;
+
   pdf.text(
-    `Total Distance: ${draft.distanceKm} KM   |   Duration: ${draft.tripDays} Day(s)`,
+    `Total Distance: ${draft.distanceKm} KM   |   Duration: ${durationLabel}`,
     110,
     cardTopY + 31.9
   );
 
   // Full-Width Pickup & Drop Location Box
-  const locBoxY = 90;
+  const locBoxY = 89;
   pdf.setDrawColor(203, 213, 225);
   pdf.setFillColor(248, 250, 252);
-  pdf.roundedRect(14, locBoxY, 182, 14, 2, 2, 'FD');
+  pdf.roundedRect(14, locBoxY, 182, 13, 2, 2, 'FD');
 
   pdf.setFont('helvetica', 'bold');
   pdf.setFontSize(7.8);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('PICKUP LOCATION:', 17, locBoxY + 5.3);
-  pdf.text('DROP LOCATION:', 17, locBoxY + 10.6);
+  pdf.text('PICKUP LOCATION:', 17, locBoxY + 5);
+  pdf.text('DROP LOCATION:', 17, locBoxY + 10);
 
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(8.2);
   pdf.setTextColor(30, 41, 59);
-  pdf.text(draft.pickupCity, 48, locBoxY + 5.3);
-  pdf.text(draft.dropCity, 48, locBoxY + 10.6);
+  pdf.text(draft.pickupCity, 48, locBoxY + 5);
+  pdf.text(draft.dropCity, 48, locBoxY + 10);
 
-  // 4-Column Itemized Service Table (S.NO | DESCRIPTION OF CAB / TRAVEL SERVICE | SAC CODE | AMOUNT (INR))
-  let y = 108;
+  // 4-Column Itemized Service Breakup Table (S.NO | DESCRIPTION OF CAB / TRAVEL SERVICE | SAC CODE | AMOUNT (INR))
+  let y = 105;
   const tableWidth = 182;
 
   // Table Header Bar
   pdf.setFillColor(241, 245, 249);
   pdf.setDrawColor(203, 213, 225);
-  pdf.rect(14, y, tableWidth, 8, 'FD');
+  pdf.rect(14, y, tableWidth, 7, 'FD');
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(7.8);
+  pdf.setFontSize(7.6);
   pdf.setTextColor(15, 23, 42);
-  pdf.text('S.NO', 17, y + 5.3);
-  pdf.text('DESCRIPTION OF CAB / TRAVEL SERVICE', 31, y + 5.3);
-  pdf.text('SAC CODE', 145, y + 5.3, { align: 'center' });
-  pdf.text('AMOUNT (INR)', 193, y + 5.3, { align: 'right' });
-  y += 8;
+  pdf.text('S.NO', 17, y + 4.8);
+  pdf.text('DESCRIPTION OF CAB / TRAVEL SERVICE (ITEMIZED BREAKUP)', 31, y + 4.8);
+  pdf.text('SAC CODE', 145, y + 4.8, { align: 'center' });
+  pdf.text('AMOUNT (INR)', 193, y + 4.8, { align: 'right' });
+  y += 7;
 
   const drawServiceRow = (
     sno: string,
@@ -1132,7 +1152,7 @@ export async function generateInvoicePdfDocument(
       rowHeight?: number;
     }
   ) => {
-    const h = options?.rowHeight ?? 8;
+    const h = options?.rowHeight ?? 6.4;
     if (options?.bgRgb) {
       pdf.setFillColor(options.bgRgb[0], options.bgRgb[1], options.bgRgb[2]);
       pdf.rect(14, y, tableWidth, h, 'F');
@@ -1145,71 +1165,133 @@ export async function generateInvoicePdfDocument(
 
     if (sno) {
       pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.text(sno, 18.5, y + 5.3);
+      pdf.setFontSize(7.8);
+      pdf.text(sno, 18.5, y + 4.4);
     }
 
     pdf.setFont('helvetica', options?.boldDesc ? 'bold' : 'normal');
-    pdf.setFontSize(options?.boldDesc ? 8.5 : 8);
-    pdf.text(desc, 31, y + 5.3);
+    pdf.setFontSize(options?.boldDesc ? 8.2 : 7.7);
+    pdf.text(desc, 31, y + 4.4);
 
     if (sac) {
       pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.text(sac, 145, y + 5.3, { align: 'center' });
+      pdf.setFontSize(7.8);
+      pdf.text(sac, 145, y + 4.4, { align: 'center' });
     }
 
     pdf.setFont('helvetica', options?.boldAmount ? 'bold' : 'normal');
-    pdf.setFontSize(options?.boldAmount ? 8.6 : 8);
-    pdf.text(amountStr, 193, y + 5.3, { align: 'right' });
+    pdf.setFontSize(options?.boldAmount ? 8.3 : 7.8);
+    pdf.text(amountStr, 193, y + 4.4, { align: 'right' });
 
     y += h;
   };
 
-  // Row 1: Cab Hire / Trip Charges
-  const routeDesc = `Cab Hire / Trip Charges (${draft.tripType} — ${draft.pickupCity} to ${draft.dropCity})`.slice(
+  let snoCounter = 1;
+
+  // Row 1: Base Cab Hire Charges (Separate from Driver Allowance & Tolls)
+  const tripModeNote =
+    draft.tripType === 'Round Trip Outstation' && Number(draft.tripDays) === 1
+      ? `${draft.tripType} • Same Day`
+      : draft.tripType;
+  const routeDesc = `Cab Hire / Base Fare (${tripModeNote} — ${draft.distanceKm} KM @ Rs.${draft.perKmRate}/KM)`.slice(
     0,
-    68
+    70
   );
   drawServiceRow(
-    '1',
+    String(snoCounter++),
     routeDesc,
     OFFICIAL_SAC_CODE,
-    formatINRDecimal(tripHireCharges),
+    formatINRDecimal(baseCabFare),
     { boldAmount: true }
   );
 
-  // Row 2: Highway Toll Tax & Inter-State Entry Permit Charges
+  // Row 2: Chauffeur / Driver Allowance (Bata) — Separate Breakup Row
   drawServiceRow(
-    '2',
-    'Highway Toll Tax & Inter-State Entry Permit Charges',
+    String(snoCounter++),
+    `Chauffeur / Driver Allowance (Bata — ${durationLabel})`,
     OFFICIAL_SAC_CODE,
-    formatINRDecimal(tollAndPermitCharges),
+    formatINRDecimal(driverAllowanceAmt),
     { boldAmount: true }
   );
+
+  // Row 3: Highway / Fastag Toll Tax — Separate Breakup Row
+  drawServiceRow(
+    String(snoCounter++),
+    'Highway / Fastag Toll Tax Charges',
+    OFFICIAL_SAC_CODE,
+    formatINRDecimal(highwayTollAmt),
+    { boldAmount: true }
+  );
+
+  // Row 4: Inter-State Entry Permit / State Tax — Separate Breakup Row
+  drawServiceRow(
+    String(snoCounter++),
+    'Inter-State Entry Permit & State Tax Charges',
+    OFFICIAL_SAC_CODE,
+    formatINRDecimal(statePermitAmt),
+    { boldAmount: true }
+  );
+
+  // Optional Row 5: Night Driving Allowance
+  if (nightChargeAmt > 0) {
+    drawServiceRow(
+      String(snoCounter++),
+      'Night Driving Allowance Charges',
+      OFFICIAL_SAC_CODE,
+      formatINRDecimal(nightChargeAmt),
+      { boldAmount: true }
+    );
+  }
+
+  // Optional Row 6: Airport / Parking / Extra Charges
+  if (parkingExtraAmt > 0) {
+    drawServiceRow(
+      String(snoCounter++),
+      'Airport / Parking / Other Extra Charges',
+      OFFICIAL_SAC_CODE,
+      formatINRDecimal(parkingExtraAmt),
+      { boldAmount: true }
+    );
+  }
+
+  // Optional Row 7: Promotional / Market Discount
+  if (discountAmt > 0) {
+    drawServiceRow(
+      String(snoCounter++),
+      'Less: Special Promotional / Market Rebate Discount',
+      OFFICIAL_SAC_CODE,
+      `- ${formatINRDecimal(discountAmt)}`,
+      {
+        boldAmount: true,
+        textRgb: [4, 120, 87],
+      }
+    );
+  }
 
   // Taxable Service Value
   drawServiceRow(
     '',
-    'Taxable Service Value',
+    'Taxable Service Value (Total Breakup Sub-Total)',
     '',
     formatINRDecimal(taxableAmount),
-    { boldDesc: true, boldAmount: true }
+    { boldDesc: true, boldAmount: true, bgRgb: [248, 250, 252] }
   );
 
-  // CGST & SGST Rows
-  drawServiceRow(
-    '',
-    'CGST @ 2.5% (Central Goods & Services Tax)',
-    '',
-    formatINRDecimal(cgst)
-  );
-  drawServiceRow(
-    '',
-    'SGST @ 2.5% (State Goods & Services Tax)',
-    '',
-    formatINRDecimal(sgst)
-  );
+  // CGST & SGST Rows (only if GST is enabled)
+  if (draft.includeGst) {
+    drawServiceRow(
+      '',
+      'CGST @ 2.5% (Central Goods & Services Tax)',
+      '',
+      formatINRDecimal(cgst)
+    );
+    drawServiceRow(
+      '',
+      'SGST @ 2.5% (State Goods & Services Tax)',
+      '',
+      formatINRDecimal(sgst)
+    );
+  }
 
   // TOTAL INVOICE AMOUNT (Tinted blue-gray bar)
   drawServiceRow(
@@ -1221,7 +1303,7 @@ export async function generateInvoicePdfDocument(
       boldDesc: true,
       boldAmount: true,
       bgRgb: [239, 246, 255],
-      rowHeight: 8.5,
+      rowHeight: 7.2,
     }
   );
 
@@ -1258,20 +1340,20 @@ export async function generateInvoicePdfDocument(
   // Amount in Words Row
   pdf.setFillColor(241, 245, 249);
   pdf.setDrawColor(203, 213, 225);
-  pdf.rect(14, y, tableWidth, 8, 'FD');
+  pdf.rect(14, y, tableWidth, 6.8, 'FD');
   pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(7.9);
+  pdf.setFontSize(7.6);
   pdf.setTextColor(15, 23, 42);
   pdf.text(
     `Amount in Words: ${numberToIndianWords(grandTotal)}`,
     17,
-    y + 5.3
+    y + 4.6
   );
-  y += 12;
+  y += 9.5;
 
   // Bottom 3-Column Footer Box (Matching uploaded invoice + Rectangular Stamp + Pre-filled Aman Mishra Signature)
   const footerBoxY = y;
-  const footerBoxH = 54;
+  const footerBoxH = 51;
   pdf.setDrawColor(203, 213, 225);
   pdf.setFillColor(255, 255, 255);
   pdf.roundedRect(14, footerBoxY, 182, footerBoxH, 2, 2, 'FD');
@@ -1439,25 +1521,36 @@ export async function shareBillPdfOnWhatsApp(
   const pdfBlob = pdf.output('blob');
   const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
-  const tripHireCharges = Math.max(
+  const baseCabFare = Math.max(0, Number(draft.baseFare || 0));
+  const driverAllowanceAmt = Math.max(0, Number(draft.driverAllowance || 0));
+  const highwayTollAmt = Math.max(0, Number(draft.tollTax || 0));
+  const statePermitAmt = Math.max(0, Number(draft.stateTax || 0));
+  const nightChargeAmt = Math.max(0, Number(draft.nightCharges || 0));
+  const parkingExtraAmt = Math.max(0, Number(draft.parkingTollExtra || 0));
+  const discountAmt = Math.max(0, Number(draft.marketDiscount || 0));
+
+  const taxableAmount = Math.max(
     0,
-    Number(draft.baseFare) +
-      Number(draft.driverAllowance) +
-      Number(draft.nightCharges) -
-      Number(draft.marketDiscount)
+    baseCabFare +
+      driverAllowanceAmt +
+      highwayTollAmt +
+      statePermitAmt +
+      nightChargeAmt +
+      parkingExtraAmt -
+      discountAmt
   );
-  const tollAndPermitCharges = Math.max(
-    0,
-    Number(draft.stateTax) + Number(draft.parkingTollExtra)
-  );
-  const taxableAmount = tripHireCharges + tollAndPermitCharges;
   const gstAmount = draft.includeGst
     ? Math.round(taxableAmount * (Number(draft.gstPercentage) / 100))
     : 0;
   const grandTotal = taxableAmount + gstAmount;
   const balanceDue = Math.max(0, grandTotal - Number(draft.advancePaid));
 
-  const captionText = `*${OFFICIAL_LEGAL_NAME} — Official GST Tax Invoice PDF*\nInvoice No: *${draft.invoiceNumber}*\nDuty / Ref ID: *${draft.bookingId}*\nGSTIN: *${OFFICIAL_GSTIN}*\nCustomer: *${draft.customerName}*\nRoute: ${draft.pickupCity} → ${draft.dropCity}\nTotal Invoice Amount: *${formatINRDecimal(grandTotal)}* (Settled: ${formatINRDecimal(draft.advancePaid)}, Balance: ${formatINRDecimal(balanceDue)})\nAuthorised Signatory: *Prop. ${draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}*`;
+  const durationLabel =
+    draft.tripType === 'Round Trip Outstation' && Number(draft.tripDays) === 1
+      ? '1 Day (Same Day Return)'
+      : `${draft.tripDays} Day(s)`;
+
+  const captionText = `*${OFFICIAL_LEGAL_NAME} — Official GST Tax Invoice PDF*\nInvoice No: *${draft.invoiceNumber}*\nDuty / Ref ID: *${draft.bookingId}*\nGSTIN: *${OFFICIAL_GSTIN}*\nCustomer: *${draft.customerName}*\nRoute: ${draft.pickupCity} → ${draft.dropCity} (${draft.tripType} • ${durationLabel})\n\n*Itemized Fare Breakup:*\n• Base Cab Fare: ${formatINRDecimal(baseCabFare)}\n• Driver Allowance: ${formatINRDecimal(driverAllowanceAmt)}\n• Highway Toll Tax: ${formatINRDecimal(highwayTollAmt)}\n• State Permit Tax: ${formatINRDecimal(statePermitAmt)}${discountAmt > 0 ? `\n• Discount: -${formatINRDecimal(discountAmt)}` : ''}${draft.includeGst ? `\n• 5% GST (CGST+SGST): ${formatINRDecimal(gstAmount)}` : ''}\n• *Total Invoice Amount: ${formatINRDecimal(grandTotal)}*\n• Settled: ${formatINRDecimal(draft.advancePaid)} | Balance: ${formatINRDecimal(balanceDue)}\nAuthorised Signatory: *Prop. ${draft.authorizedSignatoryName || OFFICIAL_PROPRIETOR}*`;
 
   sendWhatsAppCloudTextMessage(draft.customerPhone, captionText).catch(() => {
     // non-blocking

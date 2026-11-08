@@ -730,8 +730,15 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
   );
   const [pickupDate, setPickupDate] = useState(booking.pickupDate);
   const [pickupTime, setPickupTime] = useState(booking.pickupTime);
+  const [tripDays, setTripDays] = useState(booking.tripDays || 1);
+  const [sameDayReturn, setSameDayReturn] = useState(
+    booking.sameDayReturn !== undefined
+      ? booking.sameDayReturn
+      : (booking.tripDays || 1) === 1
+  );
   const [baseFare, setBaseFare] = useState(booking.baseFare);
   const [driverAllowance, setDriverAllowance] = useState(booking.driverAllowance);
+  const [tollTax, setTollTax] = useState(booking.tollTax || 0);
   const [stateTax, setStateTax] = useState(booking.stateTax);
   const [marketDiscount, setMarketDiscount] = useState(booking.marketDiscount);
   const [advancePaid, setAdvancePaid] = useState(booking.advancePaid);
@@ -749,7 +756,12 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
 
   const taxable = Math.max(
     0,
-    baseFare + driverAllowance + stateTax + booking.nightCharges - marketDiscount
+    baseFare +
+      driverAllowance +
+      tollTax +
+      stateTax +
+      booking.nightCharges -
+      marketDiscount
   );
   const gstAmount = Math.round(taxable * 0.05);
   const totalFare = taxable + gstAmount;
@@ -781,15 +793,18 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
         timestamp: new Date().toLocaleString('en-IN'),
         actor: 'Owner / Dispatch Admin',
         stage: workflowStage,
-        note: `Updated stage to ${workflowStage} · Total Fare ${formatINR(totalFare)} · Pickup ${pickupDate} ${pickupTime}`,
+        note: `Updated stage to ${workflowStage} · Total Fare ${formatINR(totalFare)} · Pickup ${pickupDate} ${pickupTime} · ${tripDays} Day(s)`,
       };
 
       const updated: Booking = {
         ...booking,
         pickupDate,
         pickupTime,
+        tripDays,
+        sameDayReturn,
         baseFare,
         driverAllowance,
+        tollTax,
         stateTax,
         marketDiscount,
         gstAmount,
@@ -823,7 +838,7 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
               Booking Command & Lifecycle Audit · {booking.bookingId}
             </h2>
             <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
-              Modify Fare, Reschedule Pickup, Track 9-Stage Dispatch Workflow, Record Internal Notes & Manage Refunds
+              Modify Itemized Fare Breakup, Reschedule Pickup, Set Same-Day / Multi-Day Duration & Track Dispatch Workflow
             </p>
           </div>
           <button
@@ -901,8 +916,8 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
             </div>
           </div>
 
-          {/* Reschedule & Fare Modification */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+          {/* Reschedule & Itemized Fare Breakup Modification */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
             <div>
               <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
                 Reschedule Pickup Date
@@ -927,7 +942,40 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
             </div>
             <div>
               <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
-                Modify Base Fare (INR)
+                Trip Days (Same Day = 1)
+              </label>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTripDays(1);
+                    setSameDayReturn(true);
+                  }}
+                  className={`px-2.5 py-2 rounded-xl font-extrabold cursor-pointer border ${
+                    tripDays === 1 && sameDayReturn
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                  }`}
+                >
+                  Same Day (1d)
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={tripDays}
+                  onChange={(e) => {
+                    const d = Math.max(1, Number(e.target.value) || 1);
+                    setTripDays(d);
+                    setSameDayReturn(d === 1);
+                  }}
+                  className="w-full px-2.5 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                1. Base Cab Fare (INR)
               </label>
               <input
                 type="number"
@@ -938,7 +986,7 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
             </div>
             <div>
               <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
-                Chauffeur Allowance (INR)
+                2. Driver Allowance / Bata (INR)
               </label>
               <input
                 type="number"
@@ -949,7 +997,18 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
             </div>
             <div>
               <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
-                State Tax / Toll (INR)
+                3. Highway Toll Tax (INR)
+              </label>
+              <input
+                type="number"
+                value={tollTax}
+                onChange={(e) => setTollTax(Number(e.target.value))}
+                className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+            <div>
+              <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                4. State Permit Tax (INR)
               </label>
               <input
                 type="number"
@@ -960,7 +1019,7 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
             </div>
             <div>
               <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
-                Discount (INR)
+                5. Discount Rebate (INR)
               </label>
               <input
                 type="number"
@@ -980,12 +1039,12 @@ export const BookingDetailAndWorkflowModal: React.FC<BookingDetailModalProps> = 
                 className="w-full px-3 py-2 font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
               />
             </div>
-            <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 flex flex-col justify-center">
-              <div className="text-[10px] font-bold text-slate-500">
-                Updated Total (incl. 5% GST)
+            <div className="sm:col-span-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                Itemized Breakup: Base {formatINR(baseFare)} + Driver Bata {formatINR(driverAllowance)} + Highway Toll {formatINR(tollTax)} + State Tax {formatINR(stateTax)} − Disc {formatINR(marketDiscount)} + 5% GST ({formatINR(gstAmount)})
               </div>
               <div className="font-mono font-extrabold text-sm text-slate-900 dark:text-white">
-                {formatINR(totalFare)} (Bal: {formatINR(balanceAmount)})
+                Total: {formatINR(totalFare)} (Bal: {formatINR(balanceAmount)})
               </div>
             </div>
           </div>

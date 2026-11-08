@@ -56,12 +56,14 @@ export interface Booking {
   pickupTime: string;
   returnDate?: string;
   returnTime?: string;
+  sameDayReturn?: boolean;
   vehicleCategory: VehicleCategory;
   distanceKm: number;
   tripDays: number;
   perKmRate: number;
   baseFare: number;
   driverAllowance: number;
+  tollTax?: number;
   stateTax: number;
   nightCharges: number;
   marketDiscount: number;
@@ -302,6 +304,7 @@ export interface CustomBillDraft {
   customerGstin: string;
   billingCompanyName: string;
   tripType: TripType;
+  sameDayReturn?: boolean;
   pickupCity: string;
   dropCity: string;
   pickupDate: string;
@@ -316,6 +319,7 @@ export interface CustomBillDraft {
   perKmRate: number;
   baseFare: number;
   driverAllowance: number;
+  tollTax: number;
   stateTax: number;
   nightCharges: number;
   parkingTollExtra: number;
@@ -637,4 +641,264 @@ export function isSampleDemoDriver(d: FleetDriver): boolean {
 // All sample/example drivers and bookings removed as requested by owner — only real onboarded fleet & customer bookings are shown
 export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [];
 export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [];
+
+/**
+ * Normalizes any incoming booking document from Firestore (whether written by the
+ * Customer Android App, Customer Website safarindiacabs.com, or Admin Panel) into
+ * a complete, type-safe Booking record so no customer booking is ever missed.
+ */
+export function normalizeIncomingBooking(
+  docId: string,
+  raw: Record<string, unknown> | null | undefined
+): Booking | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const rawId = String(
+    raw.bookingId || raw.booking_id || raw.id || raw.referenceId || docId || ''
+  ).trim();
+  const digits = rawId.replace(/\D/g, '');
+  const bookingId =
+    rawId.startsWith('SIC') && digits.length >= 4
+      ? `SIC${digits}`
+      : digits.length >= 4
+      ? `SIC${digits.slice(-6)}`
+      : `SIC${Math.floor(2607 + Math.abs(docId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) % 7000)}`;
+
+  const customerName = String(
+    raw.customerName ||
+      raw.customer_name ||
+      raw.name ||
+      raw.passengerName ||
+      raw.userName ||
+      'Safar Customer'
+  ).trim();
+
+  const rawPhone = String(
+    raw.customerPhone ||
+      raw.customer_phone ||
+      raw.phone ||
+      raw.mobile ||
+      raw.contactNumber ||
+      '+91 9999999999'
+  ).trim();
+
+  const customerEmail = String(
+    raw.customerEmail || raw.customer_email || raw.email || OFFICIAL_EMAIL
+  ).trim();
+
+  const customerGstin = String(raw.customerGstin || raw.gstin || '').trim();
+
+  const rawTrip = String(
+    raw.tripType || raw.trip_type || raw.serviceType || raw.journeyType || 'Round Trip Outstation'
+  ).toLowerCase();
+  const tripType: TripType = rawTrip.includes('one')
+    ? 'One Way Outstation'
+    : rawTrip.includes('local') || rawTrip.includes('8hr') || rawTrip.includes('rental')
+    ? 'Local 8Hr/80Km'
+    : rawTrip.includes('airport')
+    ? 'Airport Transfer'
+    : 'Round Trip Outstation';
+
+  const pickupCity = String(
+    raw.pickupCity ||
+      raw.pickup_city ||
+      raw.pickupLocation ||
+      raw.pickup ||
+      raw.from ||
+      raw.origin ||
+      'New Delhi'
+  ).trim();
+
+  const dropCity = String(
+    raw.dropCity ||
+      raw.drop_city ||
+      raw.dropLocation ||
+      raw.drop ||
+      raw.to ||
+      raw.destination ||
+      'Outstation Destination'
+  ).trim();
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const rawDate = String(
+    raw.pickupDate || raw.pickup_date || raw.travelDate || raw.date || todayStr
+  ).trim();
+  const pickupDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+    ? rawDate
+    : todayStr;
+
+  const pickupTime = String(
+    raw.pickupTime || raw.pickup_time || raw.travelTime || raw.time || '08:00 AM'
+  ).trim();
+
+  const rawCat = String(
+    raw.vehicleCategory ||
+      raw.vehicle_category ||
+      raw.cabCategory ||
+      raw.cabType ||
+      raw.carType ||
+      'Sedan'
+  ).toLowerCase();
+  const vehicleCategory: VehicleCategory = rawCat.includes('innova') || rawCat.includes('crysta')
+    ? 'Innova Crysta'
+    : rawCat.includes('suv') || rawCat.includes('ertiga') || rawCat.includes('carens')
+    ? 'SUV'
+    : rawCat.includes('hatch') || rawCat.includes('wagon') || rawCat.includes('tiago')
+    ? 'Hatchback'
+    : 'Sedan';
+
+  const defaultRate =
+    vehicleCategory === 'Innova Crysta'
+      ? 21
+      : vehicleCategory === 'SUV'
+      ? 17
+      : vehicleCategory === 'Hatchback'
+      ? 11
+      : 13;
+
+  const distanceKm = Math.max(
+    1,
+    Number(raw.distanceKm || raw.distance_km || raw.distance || raw.km || 250)
+  );
+  // Default to 1 Day (Same Day) unless explicitly > 1
+  const tripDays = Math.max(
+    1,
+    Number(raw.tripDays || raw.trip_days || raw.days || raw.durationDays || 1)
+  );
+  const sameDayReturn =
+    raw.sameDayReturn !== undefined
+      ? Boolean(raw.sameDayReturn)
+      : tripType === 'Round Trip Outstation' && tripDays === 1;
+
+  const perKmRate = Math.max(
+    5,
+    Number(raw.perKmRate || raw.per_km_rate || raw.ratePerKm || raw.rate || defaultRate)
+  );
+
+  const rawTotal = Number(
+    raw.totalFare || raw.total_fare || raw.totalAmount || raw.fare || raw.amount || 0
+  );
+  const baseFare =
+    Number(raw.baseFare || raw.base_fare || 0) > 0
+      ? Number(raw.baseFare || raw.base_fare)
+      : rawTotal > 0
+      ? Math.round(rawTotal / 1.05)
+      : Math.round(distanceKm * perKmRate);
+
+  const driverAllowance = Math.max(
+    0,
+    Number(raw.driverAllowance ?? raw.driver_allowance ?? raw.driverBata ?? 0)
+  );
+  const tollTax = Math.max(
+    0,
+    Number(raw.tollTax ?? raw.toll_tax ?? raw.highwayToll ?? 0)
+  );
+  const stateTax = Math.max(
+    0,
+    Number(raw.stateTax ?? raw.state_tax ?? raw.permitCharges ?? 0)
+  );
+  const nightCharges = Math.max(
+    0,
+    Number(raw.nightCharges ?? raw.night_charges ?? 0)
+  );
+  const marketDiscount = Math.max(
+    0,
+    Number(raw.marketDiscount ?? raw.market_discount ?? raw.discount ?? 0)
+  );
+
+  const computedTaxable = Math.max(
+    0,
+    baseFare + driverAllowance + tollTax + stateTax + nightCharges - marketDiscount
+  );
+  const gstAmount =
+    Number(raw.gstAmount ?? raw.gst_amount ?? -1) >= 0
+      ? Number(raw.gstAmount ?? raw.gst_amount)
+      : Math.round(computedTaxable * 0.05);
+
+  const totalFare =
+    rawTotal > 0 ? Math.round(rawTotal) : computedTaxable + gstAmount;
+
+  const rawPaymentMode = String(raw.paymentMode || raw.payment_mode || '').toLowerCase();
+  const paymentMode: PaymentMode =
+    rawPaymentMode.includes('full') || rawPaymentMode.includes('100')
+      ? 'Full Paid'
+      : '20% Advance';
+
+  const advancePaid =
+    Number(raw.advancePaid ?? raw.advance_paid ?? raw.paidAmount ?? -1) >= 0
+      ? Number(raw.advancePaid ?? raw.advance_paid ?? raw.paidAmount)
+      : paymentMode === 'Full Paid'
+      ? totalFare
+      : Math.round(totalFare * 0.2);
+
+  const balanceAmount =
+    Number(raw.balanceAmount ?? raw.balance_amount ?? raw.dueAmount ?? -1) >= 0
+      ? Number(raw.balanceAmount ?? raw.balance_amount ?? raw.dueAmount)
+      : Math.max(0, totalFare - advancePaid);
+
+  const rawStatus = String(raw.status || 'Pending').toLowerCase();
+  const status: BookingStatus = rawStatus.includes('complete')
+    ? 'Completed'
+    : rawStatus.includes('cancel')
+    ? 'Cancelled'
+    : rawStatus.includes('confirm') || rawStatus.includes('assign') || rawStatus.includes('active')
+    ? 'Confirmed'
+    : 'Pending';
+
+  const normalized: Booking = {
+    bookingId,
+    customerName,
+    customerPhone: rawPhone,
+    customerEmail,
+    customerGstin,
+    tripType,
+    pickupCity,
+    dropCity,
+    pickupDate,
+    pickupTime,
+    sameDayReturn,
+    vehicleCategory,
+    distanceKm,
+    tripDays,
+    perKmRate,
+    baseFare,
+    driverAllowance,
+    tollTax,
+    stateTax,
+    nightCharges,
+    marketDiscount,
+    gstAmount,
+    totalFare,
+    paymentMode,
+    advancePaid,
+    balanceAmount,
+    status,
+    workflowStage:
+      (raw.workflowStage as DetailedWorkflowStage) ||
+      (status === 'Completed'
+        ? 'Trip Completed'
+        : status === 'Confirmed'
+        ? 'Confirmed'
+        : 'Requested'),
+    bookingSource:
+      (raw.bookingSource as BookingSource) || 'Website',
+    specialInstructions: String(raw.specialInstructions || raw.notes || ''),
+    internalNotes: String(raw.internalNotes || ''),
+    driverName: String(raw.driverName || raw.driver_name || ''),
+    driverPhone: String(raw.driverPhone || raw.driver_phone || ''),
+    vehicleNumber: String(raw.vehicleNumber || raw.vehicle_number || ''),
+    vehicleModel: String(raw.vehicleModel || raw.vehicle_model || ''),
+    invoiceNumber: String(raw.invoiceNumber || raw.invoice_number || ''),
+    invoiceReady: Boolean(raw.invoiceReady ?? status === 'Completed'),
+    createdBy: String(raw.createdBy || raw.userId || 'customer_portal'),
+    createdAt: (raw.createdAt as Timestamp) || null,
+    updatedAt: (raw.updatedAt as Timestamp) || null,
+  };
+
+  if (isSampleDemoBooking(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
 
