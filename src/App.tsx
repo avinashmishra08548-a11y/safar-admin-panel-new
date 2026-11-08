@@ -68,6 +68,13 @@ import {
   WebsiteAppCmsAndNotificationsModule,
   BusinessReportsAndAnalyticsModule,
 } from './components/EnterpriseOperationsModules';
+import { BookingIdFirestoreSearchBar } from './components/BookingIdFirestoreSearchBar';
+import {
+  BOOKING_BROADCAST_CHANNEL,
+  generateUniqueBookingId,
+  normalizeBookingIdInput,
+  persistBookingToFirestore,
+} from './lib/bookingSyncService';
 import {
   Search,
   UserPlus,
@@ -578,7 +585,7 @@ function AdminDashboard() {
     };
   }, [authReady, user, directOperatorEmail]);
 
-  // Cross-tab & customer portal real-time booking sync listener
+  // Cross-tab & customer portal real-time booking sync listener (Storage + BroadcastChannel)
   useEffect(() => {
     const handleStorageSync = (e: StorageEvent) => {
       if (e.key === 'safar_local_bookings' && e.newValue) {
@@ -604,7 +611,32 @@ function AdminDashboard() {
       }
     };
     window.addEventListener('storage', handleStorageSync);
-    return () => window.removeEventListener('storage', handleStorageSync);
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      bc = new BroadcastChannel(BOOKING_BROADCAST_CHANNEL);
+      bc.onmessage = (ev) => {
+        if (ev.data?.type === 'BOOKING_UPSERT' && ev.data?.booking) {
+          const incoming = normalizeIncomingBooking(
+            String(ev.data.booking.bookingId || ''),
+            ev.data.booking as Record<string, unknown>
+          );
+          if (incoming && !isSampleDemoBooking(incoming)) {
+            setBookings((prev) => {
+              const filtered = prev.filter(
+                (b) => b.bookingId !== incoming.bookingId
+              );
+              return [incoming, ...filtered];
+            });
+          }
+        }
+      };
+    }
+
+    return () => {
+      window.removeEventListener('storage', handleStorageSync);
+      if (bc) bc.close();
+    };
   }, []);
 
   // Actively fetch & sync live customer bookings from both named & default Firestore DBs + local storage
@@ -2192,6 +2224,48 @@ function AdminDashboard() {
               </div>
             </div>
           </section>
+
+          {/* DEDICATED FIRESTORE BOOKING ID SEARCH & BREAKDOWN BAR */}
+          {(activeModule === 'overview-dashboard' ||
+            activeModule === 'control-room') && (
+            <BookingIdFirestoreSearchBar
+              bookings={bookings}
+              onBookingFoundAndSynced={(foundBooking) => {
+                setBookings((prev) => {
+                  const exists = prev.some(
+                    (b) => b.bookingId === foundBooking.bookingId
+                  );
+                  const next = exists
+                    ? prev.map((b) =>
+                        b.bookingId === foundBooking.bookingId ? foundBooking : b
+                      )
+                    : [foundBooking, ...prev];
+                  localStorage.setItem(
+                    'safar_local_bookings',
+                    JSON.stringify(next)
+                  );
+                  return next;
+                });
+              }}
+              onOpenAssignDriver={(b) => setAssignDriverTarget(b)}
+              onOpenBookingDetail={(b) => setBookingDetailTarget(b)}
+              onOpenInvoice={(b) => setInvoiceTarget(b)}
+              onOpenBillStudio={(b) => {
+                setBillGeneratorBookingTarget(b);
+                setActiveModule('bill-generator');
+              }}
+              onOpenWhatsAppDispatch={(b) => setWhatsAppTarget(b)}
+              onOpenSyncCustomerModal={() => {
+                setSyncBookingDraft((p) => ({
+                  ...p,
+                  bookingId: generateUniqueBookingId(
+                    bookings.map((b) => b.bookingId)
+                  ),
+                }));
+                setShowSyncIncomingModal(true);
+              }}
+            />
+          )}
 
           {/* TAB 0: EXECUTIVE ADMIN DASHBOARD OVERVIEW */}
           {activeModule === 'overview-dashboard' && (
@@ -4065,19 +4139,35 @@ function AdminDashboard() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
-                    Booking ID
+                    Unique Booking ID (SICXXXX)
                   </label>
-                  <input
-                    type="text"
-                    value={syncBookingDraft.bookingId}
-                    onChange={(e) =>
-                      setSyncBookingDraft((p) => ({
-                        ...p,
-                        bookingId: e.target.value.toUpperCase(),
-                      }))
-                    }
-                    className="w-full px-3 py-2 font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={syncBookingDraft.bookingId}
+                      onChange={(e) =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          bookingId: e.target.value.toUpperCase(),
+                        }))
+                      }
+                      className="w-full px-3 py-2 font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSyncBookingDraft((p) => ({
+                          ...p,
+                          bookingId: generateUniqueBookingId(
+                            bookings.map((b) => b.bookingId)
+                          ),
+                        }))
+                      }
+                      className="px-2.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 font-extrabold text-[11px] whitespace-nowrap cursor-pointer"
+                    >
+                      Auto ID
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
@@ -4366,73 +4456,39 @@ function AdminDashboard() {
                       showToast('Please enter Customer Name and Drop City to sync booking.');
                       return;
                     }
-                    const cleanId = syncBookingDraft.bookingId.startsWith('SIC')
-                      ? syncBookingDraft.bookingId
-                      : `SIC${syncBookingDraft.bookingId.replace(/\D/g, '') || Math.floor(3000 + Math.random() * 6000)}`;
+                    const cleanId =
+                      normalizeBookingIdInput(syncBookingDraft.bookingId) ||
+                      generateUniqueBookingId(bookings.map((b) => b.bookingId));
+
                     const normalized = normalizeIncomingBooking(cleanId, {
                       ...syncBookingDraft,
                       bookingId: cleanId,
                       status: 'Pending',
-                      bookingSource: 'Website',
-                      createdBy: user?.uid || 'website-live-sync',
+                      bookingSource: 'Customer Android App',
+                      createdBy: user?.uid || 'customer-live-sync',
                     });
                     if (!normalized) return;
 
+                    const { booking: savedBooking, syncedToCloud } =
+                      await persistBookingToFirestore(normalized, bookings);
+
                     const nextList = [
-                      normalized,
-                      ...bookings.filter((b) => b.bookingId !== normalized.bookingId),
+                      savedBooking,
+                      ...bookings.filter(
+                        (b) => b.bookingId !== savedBooking.bookingId
+                      ),
                     ];
                     setBookings(nextList);
-                    localStorage.setItem('safar_local_bookings', JSON.stringify(nextList));
                     setShowSyncIncomingModal(false);
-                    showToast(`Synced live customer booking ${normalized.bookingId} (${normalized.customerName}) to Control Room.`);
-
-                    if (user) {
-                      try {
-                        await setDoc(doc(db, 'bookings', normalized.bookingId), {
-                          bookingId: normalized.bookingId,
-                          customerName: normalized.customerName,
-                          customerPhone: normalized.customerPhone,
-                          customerEmail: normalized.customerEmail,
-                          customerGstin: normalized.customerGstin,
-                          tripType: normalized.tripType,
-                          pickupCity: normalized.pickupCity,
-                          dropCity: normalized.dropCity,
-                          pickupDate: normalized.pickupDate,
-                          pickupTime: normalized.pickupTime,
-                          vehicleCategory: normalized.vehicleCategory,
-                          distanceKm: normalized.distanceKm,
-                          tripDays: normalized.tripDays,
-                          perKmRate: normalized.perKmRate,
-                          baseFare: normalized.baseFare,
-                          driverAllowance: normalized.driverAllowance,
-                          stateTax: normalized.stateTax + (normalized.tollTax || 0),
-                          nightCharges: normalized.nightCharges,
-                          marketDiscount: normalized.marketDiscount,
-                          gstAmount: normalized.gstAmount,
-                          totalFare: normalized.totalFare,
-                          paymentMode: normalized.paymentMode,
-                          advancePaid: normalized.advancePaid,
-                          balanceAmount: normalized.balanceAmount,
-                          status: normalized.status,
-                          driverName: normalized.driverName,
-                          driverPhone: normalized.driverPhone,
-                          vehicleNumber: normalized.vehicleNumber,
-                          vehicleModel: normalized.vehicleModel,
-                          invoiceNumber: normalized.invoiceNumber,
-                          invoiceReady: normalized.invoiceReady,
-                          createdBy: user.uid,
-                          createdAt: serverTimestamp(),
-                          updatedAt: serverTimestamp(),
-                        });
-                      } catch {
-                        // Already saved locally and in state
-                      }
-                    }
+                    showToast(
+                      `Synced customer booking ${savedBooking.bookingId} (${savedBooking.customerName}) to Control Room${
+                        syncedToCloud ? ' & Firebase Firestore' : ''
+                      }.`
+                    );
                   }}
                   className="px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer shadow-xs"
                 >
-                  Sync Booking to Control Room
+                  Sync Booking to Control Room & Firestore
                 </button>
               </div>
             </div>

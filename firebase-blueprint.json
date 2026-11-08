@@ -168,6 +168,44 @@
           "type": "boolean",
           "description": "Whether final GST Invoice download is unlocked in customer My Rides"
         },
+        "tollTax": {
+          "type": "number",
+          "description": "Separate highway / Fastag toll tax charges in INR"
+        },
+        "sameDayReturn": {
+          "type": "boolean",
+          "description": "Whether a round-trip booking is a 1-day same-day return"
+        },
+        "route": {
+          "type": "string",
+          "description": "Formatted pickup to drop route summary string",
+          "minLength": 0,
+          "maxLength": 260
+        },
+        "bookingSource": {
+          "type": "string",
+          "description": "Origin channel of the booking (Website, Customer Android App, etc.)",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "workflowStage": {
+          "type": "string",
+          "description": "Detailed 9-stage dispatch workflow status",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "specialInstructions": {
+          "type": "string",
+          "description": "Customer special instructions or pickup notes",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "internalNotes": {
+          "type": "string",
+          "description": "Internal dispatch operator notes",
+          "minLength": 0,
+          "maxLength": 500
+        },
         "createdBy": {
           "type": "string",
           "description": "UID of the authenticated admin or customer who created the record",
@@ -189,34 +227,16 @@
         "bookingId",
         "customerName",
         "customerPhone",
-        "customerEmail",
-        "customerGstin",
         "tripType",
         "pickupCity",
         "dropCity",
         "pickupDate",
         "pickupTime",
         "vehicleCategory",
-        "distanceKm",
-        "tripDays",
-        "perKmRate",
-        "baseFare",
-        "driverAllowance",
-        "stateTax",
-        "nightCharges",
-        "marketDiscount",
-        "gstAmount",
         "totalFare",
-        "paymentMode",
         "advancePaid",
         "balanceAmount",
         "status",
-        "driverName",
-        "driverPhone",
-        "vehicleNumber",
-        "vehicleModel",
-        "invoiceNumber",
-        "invoiceReady",
         "createdBy",
         "createdAt",
         "updatedAt"
