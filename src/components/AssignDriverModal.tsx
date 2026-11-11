@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import {
   Booking,
+  BookingStatus,
   FleetDriver,
   BLUEPRINT_CONSTRAINTS,
   WHATSAPP_CLOUD_CONFIG,
   sanitizeString,
+  clampNumber,
   formatINR,
 } from '../types/safar';
 import { normalizeIndianPhone } from './NewBookingModal';
@@ -22,6 +24,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   Search,
+  Calculator,
 } from 'lucide-react';
 
 interface AssignDriverModalProps {
@@ -37,6 +40,10 @@ interface AssignDriverModalProps {
       vehicleNumber: string;
       vehicleModel: string;
       markConfirmed: boolean;
+      nextStatus?: BookingStatus;
+      tollTax?: number;
+      stateTax?: number;
+      driverAllowance?: number;
     }
   ) => Promise<void>;
 }
@@ -56,8 +63,13 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   const [vehicleModel, setVehicleModel] = useState(
     booking.vehicleModel || `${booking.vehicleCategory} AC Cab`
   );
-  const [markConfirmed, setMarkConfirmed] = useState(
-    booking.status === 'Pending' ? true : booking.status === 'Confirmed'
+  const [selectedStatus, setSelectedStatus] = useState<BookingStatus>(
+    booking.status === 'Pending' ? 'Active' : booking.status
+  );
+  const [tollTax, setTollTax] = useState<number>(booking.tollTax ?? 0);
+  const [stateTax, setStateTax] = useState<number>(booking.stateTax ?? 0);
+  const [driverAllowance, setDriverAllowance] = useState<number>(
+    booking.driverAllowance ?? 0
   );
   const [autoSendWhatsAppCloud, setAutoSendWhatsAppCloud] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,6 +79,48 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   const [filterCategory, setFilterCategory] = useState<string>('All');
   const [filterLocation, setFilterLocation] = useState<string>('');
   const [onlyAvailable, setOnlyAvailable] = useState<boolean>(false);
+
+  // Live recalculated fare preview with updated Toll Tax & State Permit Tax
+  const liveFareCalc = useMemo(() => {
+    const cleanToll = clampNumber(Number(tollTax) || 0, 0, 500000);
+    const cleanState = clampNumber(Number(stateTax) || 0, 0, 500000);
+    const cleanDa = clampNumber(Number(driverAllowance) || 0, 0, 500000);
+    const taxable = Math.max(
+      0,
+      booking.baseFare +
+        cleanDa +
+        cleanToll +
+        cleanState +
+        (booking.nightCharges || 0) -
+        (booking.marketDiscount || 0)
+    );
+    const gstAmount = Math.round(taxable * 0.05);
+    const totalFare = taxable + gstAmount;
+    const advancePaid =
+      selectedStatus === 'Completed' ? totalFare : booking.advancePaid;
+    const balanceAmount =
+      selectedStatus === 'Completed'
+        ? 0
+        : Math.max(0, totalFare - booking.advancePaid);
+    return {
+      cleanToll,
+      cleanState,
+      cleanDa,
+      gstAmount,
+      totalFare,
+      advancePaid,
+      balanceAmount,
+    };
+  }, [
+    booking.baseFare,
+    booking.nightCharges,
+    booking.marketDiscount,
+    booking.advancePaid,
+    tollTax,
+    stateTax,
+    driverAllowance,
+    selectedStatus,
+  ]);
 
   // Detect scheduling conflicts (if a driver is already assigned to another active booking on the same pickupDate)
   const conflictingDriverPhones = useMemo(() => {
@@ -112,6 +166,9 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
     setDriverPhone(drv.driverPhone);
     setVehicleNumber(drv.vehicleNumber);
     setVehicleModel(drv.vehicleModel);
+    if (selectedStatus === 'Pending') {
+      setSelectedStatus('Active');
+    }
     setValidationError(null);
   };
 
@@ -143,13 +200,13 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
     }
     if (!BLUEPRINT_CONSTRAINTS.PHONE_REGEX.test(cleanPhone)) {
       setValidationError(
-        'Please enter a valid 10-digit Indian mobile number (e.g. 9811427650).'
+        'Please enter a valid 10-digit Indian mobile number (e.g. 9818944089).'
       );
       return;
     }
     if (cleanPlate.length < 4) {
       setValidationError(
-        'Please enter a valid Vehicle Registration Number (e.g. DL 01 CAB 6812).'
+        'Please enter a valid Vehicle Registration Number (e.g. HR55BE6324).'
       );
       return;
     }
@@ -162,7 +219,11 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
         driverPhone: cleanPhone,
         vehicleNumber: cleanPlate,
         vehicleModel: cleanModel,
-        markConfirmed,
+        markConfirmed: selectedStatus !== 'Pending',
+        nextStatus: selectedStatus,
+        tollTax: liveFareCalc.cleanToll,
+        stateTax: liveFareCalc.cleanState,
+        driverAllowance: liveFareCalc.cleanDa,
       });
 
       if (autoSendWhatsAppCloud) {
@@ -172,7 +233,14 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
           driverPhone: cleanPhone,
           vehicleNumber: cleanPlate,
           vehicleModel: cleanModel,
-          status: markConfirmed ? 'Confirmed' : booking.status,
+          status: selectedStatus,
+          tollTax: liveFareCalc.cleanToll,
+          stateTax: liveFareCalc.cleanState,
+          driverAllowance: liveFareCalc.cleanDa,
+          gstAmount: liveFareCalc.gstAmount,
+          totalFare: liveFareCalc.totalFare,
+          advancePaid: liveFareCalc.advancePaid,
+          balanceAmount: liveFareCalc.balanceAmount,
         };
         triggerAutomatedWhatsAppWorkflow(updatedBooking, {
           sendCustomerConfirmation: true,
@@ -193,7 +261,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
   };
 
   const cleanDriverDigits = driverPhone.replace(/\D/g, '');
-  const driverDutyWhatsAppText = `*SAFAR INDIA CABS - NEW PICKUP DUTY SLIP*\n*Booking ID:* ${booking.bookingId}\n*Customer:* ${booking.customerName} (${booking.customerPhone})\n*Pickup:* ${booking.pickupCity} (${booking.pickupDate} at ${booking.pickupTime})\n*Drop:* ${booking.dropCity}\n*Trip Type:* ${booking.tripType} (${booking.distanceKm} KM)\n*Vehicle:* ${vehicleNumber || 'Assigned Cab'} (${vehicleModel})\n*Collect Balance from Customer:* ${formatINR(booking.balanceAmount)}\n\nPlease reply *ACCEPTED* to Admin Control Room (+91 7710080992).`;
+  const driverDutyWhatsAppText = `*SAFAR INDIA CABS - NEW PICKUP DUTY SLIP*\n*Booking ID:* ${booking.bookingId}\n*Customer:* ${booking.customerName} (${booking.customerPhone})\n*Pickup:* ${booking.pickupCity} (${booking.pickupDate} at ${booking.pickupTime})\n*Drop:* ${booking.dropCity}\n*Trip Type:* ${booking.tripType} (${booking.distanceKm} KM)\n*Vehicle:* ${vehicleNumber || 'Assigned Cab'} (${vehicleModel})\n*Toll Tax:* ${formatINR(liveFareCalc.cleanToll)} | *State Tax:* ${formatINR(liveFareCalc.cleanState)}\n*Collect Balance from Customer:* ${formatINR(liveFareCalc.balanceAmount)}\n\nPlease reply *ACCEPTED* to Admin Control Room (+91 7710080992).`;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
@@ -203,14 +271,14 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white font-display">
-                Admin Dispatch & Chauffeur Assignment · {booking.bookingId}
+                Admin Dispatch, Chauffeur Allotment & Toll/Tax Billing · {booking.bookingId}
               </h2>
               <span className="px-2 py-0.5 rounded-md text-[11px] font-extrabold bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/40">
-                Admin-Controlled Dispatch (No Driver App Required)
+                Pending → Active → Completed
               </span>
             </div>
             <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mt-0.5">
-              Compare booking schedule on the left with verified chauffeurs on the right, detect conflicts & dispatch via Call / WhatsApp / SMS
+              Assign chauffeur & vehicle, set trip status (Pending → Active → Completed), and verify Highway Toll / State Tax for final billing
             </p>
           </div>
           <button
@@ -224,7 +292,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
 
         {/* Split-Screen Grid: Left = Booking Details & Direct Assignment Form | Right = Available Driver Pool & Conflict Detector */}
         <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-300 dark:divide-slate-800">
-          {/* LEFT COLUMN (7 cols): Booking Overview + Manual/Selected Driver Form + Direct Driver Communication */}
+          {/* LEFT COLUMN (7 cols): Booking Overview + Manual/Selected Driver Form + Toll/State Tax + Status Stepper */}
           <form onSubmit={handleSubmit} className="lg:col-span-7 p-5 sm:p-6 space-y-4">
             {/* Booking Summary Card */}
             <div className="p-3.5 rounded-xl bg-slate-100/90 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-800 space-y-2 text-xs">
@@ -251,9 +319,9 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   {booking.tripType} · {booking.distanceKm} KM ({booking.tripDays}d)
                 </span>
                 <span>
-                  Total: <strong>{formatINR(booking.totalFare)}</strong> · Collect:{' '}
+                  Total: <strong>{formatINR(liveFareCalc.totalFare)}</strong> · Collect:{' '}
                   <strong className="text-emerald-700 dark:text-emerald-400">
-                    {formatINR(booking.balanceAmount)}
+                    {formatINR(liveFareCalc.balanceAmount)}
                   </strong>
                 </span>
               </div>
@@ -301,7 +369,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                     onBlur={() =>
                       setDriverPhone((prev) => normalizeIndianPhone(prev))
                     }
-                    placeholder="+91 98182 74105"
+                    placeholder="+91 9818944089"
                     className="w-full pl-9 pr-3 py-2 text-sm font-mono font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
                   />
                 </div>
@@ -321,7 +389,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                     onChange={(e) =>
                       setVehicleNumber(e.target.value.toUpperCase())
                     }
-                    placeholder="DL 01 CAB 6812"
+                    placeholder="HR55BE6324"
                     className="w-full pl-9 pr-3 py-2 text-sm font-mono font-bold uppercase bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
                   />
                 </div>
@@ -339,6 +407,92 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                   placeholder="Swift Dzire / Innova Crysta"
                   className="w-full px-3 py-2 text-sm font-bold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
                 />
+              </div>
+            </div>
+
+            {/* Toll Tax, State Tax & Driver Allowance Final Billing Inputs */}
+            <div className="p-3.5 rounded-xl bg-amber-50/60 dark:bg-slate-950 border-2 border-amber-300/80 dark:border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-slate-900 dark:text-amber-400 flex items-center gap-1.5">
+                  <Calculator className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Toll Tax, State Permit Tax & Allowance (Final Billing)</span>
+                </span>
+                <span className="text-[11px] font-mono font-bold text-slate-600 dark:text-slate-400">
+                  Base: {formatINR(booking.baseFare)} + 5% GST ({formatINR(liveFareCalc.gstAmount)})
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Highway Toll Tax (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500000}
+                    value={tollTax}
+                    onChange={(e) => setTollTax(Number(e.target.value) || 0)}
+                    className="w-full px-2.5 py-1.5 font-mono font-extrabold bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    State Permit Tax (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500000}
+                    value={stateTax}
+                    onChange={(e) => setStateTax(Number(e.target.value) || 0)}
+                    className="w-full px-2.5 py-1.5 font-mono font-extrabold bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-extrabold text-slate-700 dark:text-slate-300 mb-1">
+                    Driver Allowance (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500000}
+                    value={driverAllowance}
+                    onChange={(e) =>
+                      setDriverAllowance(Number(e.target.value) || 0)
+                    }
+                    className="w-full px-2.5 py-1.5 font-mono font-extrabold bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Trip Status Lifecycle Selector (Pending -> Active -> Completed) */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                Update Booking Dispatch Status (Pending → Active → Completed)
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(
+                  [
+                    { status: 'Pending', label: '1. Pending' },
+                    { status: 'Confirmed', label: '2. Allotted' },
+                    { status: 'Active', label: '3. Active Trip' },
+                    { status: 'Completed', label: '4. Completed' },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.status}
+                    type="button"
+                    onClick={() => setSelectedStatus(item.status)}
+                    className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border-2 transition-colors cursor-pointer ${
+                      selectedStatus === item.status
+                        ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 border-slate-900 dark:border-amber-500 shadow-xs'
+                        : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-800 hover:border-amber-500'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -366,7 +520,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 </a>
                 <a
                   href={`sms:${cleanDriverDigits || '917710080992'}?body=${encodeURIComponent(
-                    `SafarIndiaCabs Duty ${booking.bookingId}: Pickup ${booking.customerName} (${booking.customerPhone}) at ${booking.pickupCity} on ${booking.pickupDate} ${booking.pickupTime}. Drop: ${booking.dropCity}. Collect INR ${booking.balanceAmount}.`
+                    `SafarIndiaCabs Duty ${booking.bookingId}: Pickup ${booking.customerName} (${booking.customerPhone}) at ${booking.pickupCity} on ${booking.pickupDate} ${booking.pickupTime}. Drop: ${booking.dropCity}. Collect INR ${liveFareCalc.balanceAmount}.`
                   )}`}
                   className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
                 >
@@ -375,19 +529,6 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 </a>
               </div>
             </div>
-
-            <label className="flex items-center gap-2.5 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={markConfirmed}
-                onChange={(e) => setMarkConfirmed(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 accent-amber-500"
-              />
-              <span>
-                Record Chauffeur Acceptance & mark booking as{' '}
-                <strong>CONFIRMED (Driver Assigned)</strong>
-              </span>
-            </label>
 
             {/* Meta WhatsApp Cloud API Automated Dual Alert Toggle */}
             <div className="p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800 flex items-start gap-2.5">
@@ -426,8 +567,8 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {saving
-                    ? 'Assigning & Dispatching...'
-                    : '1-Click Assign Driver & Send Alerts'}
+                    ? 'Saving & Syncing...'
+                    : `Save Dispatch (${selectedStatus}) & Sync Firestore`}
                 </span>
               </button>
             </div>

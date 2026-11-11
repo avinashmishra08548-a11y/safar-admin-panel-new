@@ -131,7 +131,7 @@
         "status": {
           "type": "string",
           "description": "Current lifecycle status of the booking",
-          "enum": ["Pending", "Confirmed", "Completed", "Cancelled"],
+          "enum": ["Pending", "Confirmed", "Active", "Completed", "Cancelled"],
           "maxLength": 15
         },
         "driverName": {

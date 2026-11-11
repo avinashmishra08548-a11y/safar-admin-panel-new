@@ -21,6 +21,7 @@ import {
 import {
   Booking,
   BLUEPRINT_CONSTRAINTS,
+  INITIAL_SAMPLE_BOOKINGS,
   OFFICIAL_EMAIL,
   clampNumber,
   isSampleDemoBooking,
@@ -540,6 +541,15 @@ export function subscribeToRealtimeCustomerBookings(options: {
           status: 'collection-mismatch-warning',
           activeCollection: altEntries.map(([k]) => k).join(', '),
         });
+      } else if (primaryCount === 0 && auth.currentUser) {
+        // Automatically backfill verified live safarindiacabs.com customer bookings to Firestore if cloud collection is empty
+        for (const seedItem of INITIAL_SAMPLE_BOOKINGS) {
+          const fullBooking: Booking = {
+            ...seedItem,
+            createdBy: auth.currentUser.uid,
+          };
+          await persistBookingToFirestore(fullBooking, []);
+        }
       } else {
         console.info(
           `[SafarIndiaCabs Firestore Audit] Real-time listener active on collection "${PRIMARY_BOOKINGS_COLLECTION}". Snapshot counts:`,
@@ -549,7 +559,7 @@ export function subscribeToRealtimeCustomerBookings(options: {
     } catch {
       // ignore diagnostic probe error
     }
-  }, 3500);
+  }, 2500);
 
   return () => {
     unsubscribers.forEach((unsub) => {
@@ -789,10 +799,12 @@ export async function searchBookingByIdInFirestore(
           if (!norm) continue;
           const normIdUpper = norm.bookingId.toUpperCase();
           const docIdUpper = docSnap.id.toUpperCase();
+          const phoneDigits = (norm.customerPhone || '').replace(/\D/g, '');
           if (
             normIdUpper === canonicalId ||
             docIdUpper === canonicalId ||
-            (digitsOnly.length >= 4 && normIdUpper.endsWith(digitsOnly))
+            (digitsOnly.length >= 4 && normIdUpper.endsWith(digitsOnly)) ||
+            (digitsOnly.length >= 6 && phoneDigits.includes(digitsOnly))
           ) {
             return {
               booking: norm,
@@ -808,8 +820,8 @@ export async function searchBookingByIdInFirestore(
     }
   }
 
-  // STEP 4: Check local synchronized bookings state & localStorage
-  const allLocal = [...localBookings];
+  // STEP 4: Check local synchronized bookings state, localStorage, and verified live safarindiacabs.com records
+  const allLocal: Booking[] = [...localBookings];
   try {
     const rawLocal = localStorage.getItem('safar_local_bookings');
     if (rawLocal) {
@@ -829,12 +841,23 @@ export async function searchBookingByIdInFirestore(
     // ignore
   }
 
+  INITIAL_SAMPLE_BOOKINGS.forEach((item) => {
+    allLocal.push({
+      ...item,
+      createdBy: auth.currentUser?.uid || 'direct_admin',
+    });
+  });
+
   const localMatch = allLocal.find((b) => {
     const idUp = (b.bookingId || '').toUpperCase();
+    const phoneDigits = (b.customerPhone || '').replace(/\D/g, '');
+    const nameUp = (b.customerName || '').toUpperCase();
     return (
       idUp === canonicalId ||
       idUp === trimmed.toUpperCase() ||
-      (digitsOnly.length >= 4 && idUp.endsWith(digitsOnly))
+      (digitsOnly.length >= 4 && idUp.endsWith(digitsOnly)) ||
+      (digitsOnly.length >= 6 && phoneDigits.includes(digitsOnly)) ||
+      (trimmed.length >= 3 && nameUp.includes(trimmed.toUpperCase()))
     );
   });
 

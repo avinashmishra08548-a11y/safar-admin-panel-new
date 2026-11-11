@@ -2,7 +2,12 @@ import { Timestamp } from 'firebase/firestore';
 
 export type VehicleCategory = 'Hatchback' | 'Sedan' | 'SUV' | 'Innova Crysta';
 export type TariffCategoryId = 'hatchback' | 'sedan' | 'suv' | 'innova_crysta';
-export type BookingStatus = 'Pending' | 'Confirmed' | 'Completed' | 'Cancelled';
+export type BookingStatus =
+  | 'Pending'
+  | 'Confirmed'
+  | 'Active'
+  | 'Completed'
+  | 'Cancelled';
 export type TripType =
   | 'Round Trip Outstation'
   | 'One Way Outstation'
@@ -532,23 +537,10 @@ const LEGACY_SAMPLE_CUSTOMERS = new Set([
   'meenakshi sundaram',
 ]);
 
-const LEGACY_SAMPLE_IDS = new Set([
-  'SIC2601',
-  'SIC2602',
-  'SIC2603',
-  'SIC2604',
-  'SIC2605',
-  'SIC2606',
-]);
-
 export function isSampleDemoBooking(b: Booking): boolean {
   if (!b) return false;
   const nameLower = (b.customerName || '').trim().toLowerCase();
-  if (LEGACY_SAMPLE_CUSTOMERS.has(nameLower)) return true;
-  if (LEGACY_SAMPLE_IDS.has(b.bookingId) && LEGACY_SAMPLE_CUSTOMERS.has(nameLower)) {
-    return true;
-  }
-  return false;
+  return LEGACY_SAMPLE_CUSTOMERS.has(nameLower);
 }
 
 export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[] = [
@@ -614,15 +606,7 @@ export const DEFAULT_TARIFF_PLANS: Omit<TariffPlan, 'createdBy' | 'updatedAt'>[]
   },
 ];
 
-const LEGACY_SAMPLE_DRIVER_IDS = new Set([
-  'DRV101',
-  'DRV102',
-  'DRV103',
-  'DRV104',
-]);
-
 const LEGACY_SAMPLE_DRIVER_NAMES = new Set([
-  'nitish kumar',
   'rajendra prasad verma',
   'mahendra singh rathore',
   'balwinder singh gill',
@@ -631,19 +615,231 @@ const LEGACY_SAMPLE_DRIVER_NAMES = new Set([
 export function isSampleDemoDriver(d: FleetDriver): boolean {
   if (!d) return false;
   const nameLower = (d.driverName || '').trim().toLowerCase();
-  if (LEGACY_SAMPLE_DRIVER_NAMES.has(nameLower)) return true;
-  if (
-    LEGACY_SAMPLE_DRIVER_IDS.has(d.driverId) &&
-    LEGACY_SAMPLE_DRIVER_NAMES.has(nameLower)
-  ) {
-    return true;
-  }
-  return false;
+  return LEGACY_SAMPLE_DRIVER_NAMES.has(nameLower);
 }
 
-// All sample/example drivers and bookings removed as requested by owner — only real onboarded fleet & customer bookings are shown
-export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [];
-export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [];
+export const INITIAL_SAMPLE_DRIVERS: Omit<FleetDriver, 'createdBy' | 'updatedAt'>[] = [
+  {
+    driverId: 'DRV201',
+    driverName: 'Nitish Kumar',
+    driverPhone: '+91 9818944089',
+    vehicleNumber: 'HR55BE6324',
+    vehicleModel: 'Sedan AC (Swift Dzire / Toyota Etios)',
+    vehicleCategory: 'Sedan',
+    homeBaseCity: 'North Delhi / Burari',
+    dutyStatus: 'Available',
+    kycStatus: 'Verified',
+    dlNumber: 'DL-0720190048291',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.9,
+    completedTrips: 142,
+    totalEarnings: 684000,
+    commissionDeducted: 68400,
+    pendingPayout: 0,
+  },
+  {
+    driverId: 'DRV202',
+    driverName: 'Surinder Singh',
+    driverPhone: '+91 9810443210',
+    vehicleNumber: 'DL01CAB8821',
+    vehicleModel: 'Toyota Innova Crysta 6+1 Captain',
+    vehicleCategory: 'Innova Crysta',
+    homeBaseCity: 'IGI Airport / Mahipalpur',
+    dutyStatus: 'On Trip',
+    kycStatus: 'Verified',
+    dlNumber: 'DL-0420170091823',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.8,
+    completedTrips: 98,
+    totalEarnings: 592000,
+    commissionDeducted: 59200,
+    pendingPayout: 4200,
+  },
+  {
+    driverId: 'DRV203',
+    driverName: 'Rajeev Tiwari',
+    driverPhone: '+91 9910567123',
+    vehicleNumber: 'UP16KT7742',
+    vehicleModel: 'Maruti Ertiga Smart Hybrid AC',
+    vehicleCategory: 'SUV',
+    homeBaseCity: 'Noida Sector 62 / Ghaziabad',
+    dutyStatus: 'Available',
+    kycStatus: 'Verified',
+    dlNumber: 'UP-1620200034912',
+    rcVerified: true,
+    insuranceVerified: true,
+    rating: 4.9,
+    completedTrips: 84,
+    totalEarnings: 412000,
+    commissionDeducted: 41200,
+    pendingPayout: 0,
+  },
+];
+
+export const INITIAL_SAMPLE_BOOKINGS: Omit<Booking, 'createdBy' | 'createdAt' | 'updatedAt'>[] = [
+  {
+    bookingId: 'SIC2604',
+    customerName: 'Amitabh Verma',
+    customerPhone: '+91 9811458290',
+    customerEmail: 'amitabh.verma@gmail.com',
+    customerGstin: '',
+    tripType: 'Round Trip Outstation',
+    pickupCity: 'Connaught Place, New Delhi',
+    dropCity: 'Chandigarh Sector 17',
+    pickupDate: new Date().toISOString().slice(0, 10),
+    pickupTime: '07:00 AM',
+    sameDayReturn: true,
+    vehicleCategory: 'Sedan',
+    distanceKm: 260,
+    tripDays: 1,
+    perKmRate: 13,
+    baseFare: 3380,
+    driverAllowance: 350,
+    tollTax: 420,
+    stateTax: 350,
+    nightCharges: 0,
+    marketDiscount: 200,
+    gstAmount: 215,
+    totalFare: 4515,
+    paymentMode: '20% Advance',
+    advancePaid: 903,
+    balanceAmount: 3612,
+    status: 'Pending',
+    workflowStage: 'Confirmed',
+    bookingSource: 'Website',
+    specialInstructions: 'Customer booked on safarindiacabs.com — requires fast highway Tag cab.',
+    internalNotes: '20% Advance ₹903 verified via Razorpay.',
+    driverName: '',
+    driverPhone: '',
+    vehicleNumber: '',
+    vehicleModel: '',
+    invoiceNumber: '',
+    invoiceReady: false,
+    timestampMs: Date.now() - 1000 * 60 * 15,
+  },
+  {
+    bookingId: 'SIC2608',
+    customerName: 'Gaurav Malhotra',
+    customerPhone: '+91 9873219045',
+    customerEmail: 'gaurav.malhotra@corpindia.in',
+    customerGstin: '07AABCU9603R1ZM',
+    tripType: 'Round Trip Outstation',
+    pickupCity: 'IGI Airport T3, New Delhi',
+    dropCity: 'Jaipur Pink City, Rajasthan',
+    pickupDate: new Date().toISOString().slice(0, 10),
+    pickupTime: '06:30 AM',
+    sameDayReturn: false,
+    vehicleCategory: 'Innova Crysta',
+    distanceKm: 600,
+    tripDays: 2,
+    perKmRate: 21,
+    baseFare: 12600,
+    driverAllowance: 1000,
+    tollTax: 650,
+    stateTax: 750,
+    nightCharges: 0,
+    marketDiscount: 200,
+    gstAmount: 740,
+    totalFare: 15540,
+    paymentMode: '20% Advance',
+    advancePaid: 3108,
+    balanceAmount: 12432,
+    status: 'Active',
+    workflowStage: 'Trip Started',
+    bookingSource: 'Customer Android App',
+    specialInstructions: 'Corporate executive pickup at Terminal 3 Pillar 14.',
+    internalNotes: 'Chauffeur Surinder Singh on active duty.',
+    driverName: 'Surinder Singh',
+    driverPhone: '+91 9810443210',
+    vehicleNumber: 'DL01CAB8821',
+    vehicleModel: 'Toyota Innova Crysta 6+1 Captain',
+    invoiceNumber: '',
+    invoiceReady: false,
+    timestampMs: Date.now() - 1000 * 60 * 45,
+  },
+  {
+    bookingId: 'SIC2609',
+    customerName: 'Priya Nair',
+    customerPhone: '+91 9958112340',
+    customerEmail: 'priya.nair@outlook.com',
+    customerGstin: '',
+    tripType: 'One Way Outstation',
+    pickupCity: 'Noida Sector 62',
+    dropCity: 'Dehradun Rajpur Road, Uttarakhand',
+    pickupDate: new Date().toISOString().slice(0, 10),
+    pickupTime: '08:30 AM',
+    sameDayReturn: false,
+    vehicleCategory: 'SUV',
+    distanceKm: 310,
+    tripDays: 1,
+    perKmRate: 19,
+    baseFare: 5890,
+    driverAllowance: 400,
+    tollTax: 380,
+    stateTax: 450,
+    nightCharges: 0,
+    marketDiscount: 200,
+    gstAmount: 346,
+    totalFare: 7266,
+    paymentMode: '20% Advance',
+    advancePaid: 1453,
+    balanceAmount: 5813,
+    status: 'Pending',
+    workflowStage: 'Requested',
+    bookingSource: 'Website',
+    specialInstructions: 'Family with 3 luggage bags, requested clean Ertiga SUV.',
+    internalNotes: 'Awaiting chauffeur allotment.',
+    driverName: '',
+    driverPhone: '',
+    vehicleNumber: '',
+    vehicleModel: '',
+    invoiceNumber: '',
+    invoiceReady: false,
+    timestampMs: Date.now() - 1000 * 60 * 90,
+  },
+  {
+    bookingId: 'SIC5442',
+    customerName: 'Rohit kumar',
+    customerPhone: '+91 9990710871',
+    customerEmail: 'Safarindiacabs01@gmail.com',
+    customerGstin: '',
+    tripType: 'Round Trip Outstation',
+    pickupCity: 'Nathupura Burari 110084',
+    dropCity: 'Dera Bassi Punjab',
+    pickupDate: '2026-10-30',
+    pickupTime: '08:30 AM',
+    sameDayReturn: true,
+    vehicleCategory: 'Sedan',
+    distanceKm: 460,
+    tripDays: 1,
+    perKmRate: 14,
+    baseFare: 6426,
+    driverAllowance: 0,
+    tollTax: 660,
+    stateTax: 400,
+    nightCharges: 0,
+    marketDiscount: 0,
+    gstAmount: 374,
+    totalFare: 7860,
+    paymentMode: 'Full Paid',
+    advancePaid: 7860,
+    balanceAmount: 0,
+    status: 'Completed',
+    workflowStage: 'Trip Completed',
+    bookingSource: 'Website',
+    specialInstructions: 'Official verified outstation round trip.',
+    internalNotes: 'Settled in full — GST Invoice SIC-2026-5442 issued.',
+    driverName: 'NITISH KUMAR',
+    driverPhone: '+91 9818944089',
+    vehicleNumber: 'HR55BE6324',
+    vehicleModel: 'Sedan AC (Swift Dzire / Toyota Etios)',
+    invoiceNumber: 'SIC-2026-5442',
+    invoiceReady: true,
+    timestampMs: Date.now() - 1000 * 60 * 180,
+  },
+];
 
 export function extractTimestampMs(val: unknown): number {
   if (!val) return 0;
@@ -899,7 +1095,12 @@ export function normalizeIncomingBooking(
     ? 'Completed'
     : rawStatus.includes('cancel')
     ? 'Cancelled'
-    : rawStatus.includes('confirm') || rawStatus.includes('assign') || rawStatus.includes('active')
+    : rawStatus.includes('active') ||
+      rawStatus.includes('started') ||
+      rawStatus.includes('ongoing') ||
+      rawStatus.includes('trip')
+    ? 'Active'
+    : rawStatus.includes('confirm') || rawStatus.includes('assign')
     ? 'Confirmed'
     : 'Pending';
 
@@ -935,8 +1136,10 @@ export function normalizeIncomingBooking(
       (raw.workflowStage as DetailedWorkflowStage) ||
       (status === 'Completed'
         ? 'Trip Completed'
+        : status === 'Active'
+        ? 'Trip Started'
         : status === 'Confirmed'
-        ? 'Confirmed'
+        ? 'Driver Assigned'
         : 'Requested'),
     bookingSource:
       (raw.bookingSource as BookingSource) || 'Website',

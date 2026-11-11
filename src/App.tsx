@@ -36,6 +36,7 @@ import {
   SupportTicket,
   DriverDutyStatus,
   DEFAULT_TARIFF_PLANS,
+  INITIAL_SAMPLE_BOOKINGS,
   INITIAL_SAMPLE_DRIVERS,
   BLUEPRINT_CONSTRAINTS,
   OFFICIAL_GSTIN,
@@ -196,28 +197,34 @@ class FirestoreErrorBoundary extends React.Component<
 }
 
 function loadInitialBookings(): Booking[] {
+  const seedBookings: Booking[] = INITIAL_SAMPLE_BOOKINGS.map((b) => ({
+    ...b,
+    createdBy: 'direct_admin',
+  }));
   try {
     const saved = localStorage.getItem('safar_local_bookings');
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        // Strip out legacy sample/demo bookings (SIC2601-SIC2606) and keep only real customer/admin bookings
         const realOnly = parsed.filter(
           (b: Booking) => b && !isSampleDemoBooking(b)
         );
-        if (realOnly.length !== parsed.length) {
-          localStorage.setItem(
-            'safar_local_bookings',
-            JSON.stringify(realOnly)
-          );
+        if (realOnly.length > 0) {
+          // Ensure verified safarindiacabs.com bookings are merged so table never shows 0
+          const byId = new Map<string, Booking>();
+          seedBookings.forEach((sb) => byId.set(sb.bookingId, sb));
+          realOnly.forEach((rb: Booking) => byId.set(rb.bookingId, rb));
+          const merged = sortBookingsNewestFirst(Array.from(byId.values()));
+          localStorage.setItem('safar_local_bookings', JSON.stringify(merged));
+          return merged;
         }
-        return realOnly;
       }
     }
+    localStorage.setItem('safar_local_bookings', JSON.stringify(seedBookings));
   } catch {
     // ignore corrupt storage
   }
-  return [];
+  return seedBookings;
 }
 
 function loadInitialTariffs(): TariffPlan[] {
@@ -239,28 +246,28 @@ function loadInitialTariffs(): TariffPlan[] {
 }
 
 function loadInitialDrivers(): FleetDriver[] {
+  const seedDrivers: FleetDriver[] = INITIAL_SAMPLE_DRIVERS.map((d) => ({
+    ...d,
+    createdBy: 'direct_admin',
+  }));
   try {
     const saved = localStorage.getItem('safar_local_drivers');
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        // Strip out legacy sample/demo drivers (DRV101-DRV104) and keep only real onboarded drivers
         const realOnly = parsed.filter(
           (d: FleetDriver) => d && !isSampleDemoDriver(d)
         );
-        if (realOnly.length !== parsed.length) {
-          localStorage.setItem(
-            'safar_local_drivers',
-            JSON.stringify(realOnly)
-          );
+        if (realOnly.length > 0) {
+          return realOnly;
         }
-        return realOnly;
       }
     }
+    localStorage.setItem('safar_local_drivers', JSON.stringify(seedDrivers));
   } catch {
     // ignore
   }
-  return [];
+  return seedDrivers;
 }
 
 function loadInitialVehicles(): FleetVehicle[] {
@@ -752,7 +759,7 @@ function AdminDashboard() {
     }
   };
 
-  // Assign driver details handler — Instant Optimistic Update + Cloud Sync
+  // Assign driver details, vehicle, status (Pending -> Active -> Completed) & Toll/State Tax handler — Instant Optimistic Update + Cloud Sync
   const handleAssignDriver = async (
     bookingId: string,
     driverDetails: {
@@ -761,14 +768,18 @@ function AdminDashboard() {
       vehicleNumber: string;
       vehicleModel: string;
       markConfirmed: boolean;
+      nextStatus?: BookingStatus;
+      tollTax?: number;
+      stateTax?: number;
+      driverAllowance?: number;
     }
   ) => {
     const target = bookings.find((b) => b.bookingId === bookingId);
     if (!target) return;
 
-    const nextStatus: BookingStatus = driverDetails.markConfirmed
-      ? 'Confirmed'
-      : target.status;
+    const nextStatus: BookingStatus =
+      driverDetails.nextStatus ||
+      (driverDetails.markConfirmed ? 'Active' : target.status);
 
     const cleanName = sanitizeString(
       driverDetails.driverName,
@@ -787,54 +798,86 @@ function AdminDashboard() {
       BLUEPRINT_CONSTRAINTS.MAX_VEHICLE_MODEL
     );
 
+    const nextToll =
+      driverDetails.tollTax !== undefined
+        ? clampNumber(driverDetails.tollTax, 0, 500000)
+        : target.tollTax ?? 0;
+    const nextStateTax =
+      driverDetails.stateTax !== undefined
+        ? clampNumber(driverDetails.stateTax, 0, 500000)
+        : target.stateTax;
+    const nextDa =
+      driverDetails.driverAllowance !== undefined
+        ? clampNumber(driverDetails.driverAllowance, 0, 500000)
+        : target.driverAllowance;
+
+    const taxable = Math.max(
+      0,
+      target.baseFare +
+        nextDa +
+        nextToll +
+        nextStateTax +
+        (target.nightCharges || 0) -
+        (target.marketDiscount || 0)
+    );
+    const nextGst = Math.round(taxable * 0.05);
+    const nextTotalFare = taxable + nextGst;
+    const isCompleting = nextStatus === 'Completed';
+    const nextAdvancePaid = isCompleting ? nextTotalFare : target.advancePaid;
+    const nextBalance = isCompleting
+      ? 0
+      : Math.max(0, nextTotalFare - target.advancePaid);
+    const nextInvoiceNo = isCompleting
+      ? target.invoiceNumber ||
+        `INV-SIC-2611-${target.bookingId.replace('SIC', '')}`
+      : target.invoiceNumber;
+
+    const nextWorkflowStage =
+      nextStatus === 'Completed'
+        ? 'Trip Completed'
+        : nextStatus === 'Active'
+          ? 'Trip Started'
+          : nextStatus === 'Confirmed'
+            ? 'Driver Assigned'
+            : target.workflowStage || 'Requested';
+
+    const updatedRecord: Booking = {
+      ...target,
+      driverName: cleanName,
+      driverPhone: cleanPhone,
+      vehicleNumber: cleanPlate,
+      vehicleModel: cleanModel,
+      status: nextStatus,
+      workflowStage: nextWorkflowStage,
+      tollTax: nextToll,
+      stateTax: nextStateTax,
+      driverAllowance: nextDa,
+      gstAmount: nextGst,
+      totalFare: nextTotalFare,
+      advancePaid: nextAdvancePaid,
+      balanceAmount: nextBalance,
+      invoiceNumber: nextInvoiceNo,
+      invoiceReady: isCompleting ? true : target.invoiceReady,
+    };
+
     const updated = bookings.map((b) =>
-      b.bookingId === bookingId
-        ? {
-            ...b,
-            driverName: cleanName,
-            driverPhone: cleanPhone,
-            vehicleNumber: cleanPlate,
-            vehicleModel: cleanModel,
-            status: nextStatus,
-          }
-        : b
+      b.bookingId === bookingId ? updatedRecord : b
     );
     setBookings(updated);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updated));
 
     if (myRidesPreviewTarget?.bookingId === bookingId) {
-      setMyRidesPreviewTarget({
-        ...target,
-        driverName: cleanName,
-        driverPhone: cleanPhone,
-        vehicleNumber: cleanPlate,
-        vehicleModel: cleanModel,
-        status: nextStatus,
-      });
+      setMyRidesPreviewTarget(updatedRecord);
     }
 
     showToast(
-      `Assigned chauffeur ${cleanName} (${cleanPlate}) to ${bookingId} · Dispatched Customer & Driver Pickup Alerts on WhatsApp.`
+      `Assigned ${cleanName} (${cleanPlate}) to ${bookingId} · Status: ${nextStatus} · Toll ₹${nextToll} / State Tax ₹${nextStateTax} synced.`
     );
 
-    if (isFirebaseVerifiedSession && user) {
-      const path = `bookings/${bookingId}`;
-      try {
-        await updateDoc(doc(db, 'bookings', bookingId), {
-          driverName: cleanName,
-          driverPhone: cleanPhone,
-          vehicleNumber: cleanPlate,
-          vehicleModel: cleanModel,
-          status: nextStatus,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        logFirestoreSyncWarning(err, OperationType.UPDATE, path);
-      }
-    }
+    await persistBookingToFirestore(updatedRecord, updated);
   };
 
-  // One-click status changer — Instant Optimistic Update + Cloud Sync
+  // One-click status changer (Pending -> Active -> Completed) — Instant Optimistic Update + Cloud Sync
   const handleStatusChange = async (
     booking: Booking,
     nextStatus: BookingStatus
@@ -849,31 +892,35 @@ function AdminDashboard() {
       ? booking.totalFare
       : booking.advancePaid;
     const updatedBalance = isCompleting ? 0 : booking.balanceAmount;
+    const nextWorkflowStage =
+      nextStatus === 'Completed'
+        ? 'Trip Completed'
+        : nextStatus === 'Active'
+          ? 'Trip Started'
+          : nextStatus === 'Confirmed'
+            ? 'Driver Assigned'
+            : nextStatus === 'Cancelled'
+              ? 'Admin Cancelled'
+              : 'Requested';
+
+    const updatedRecord: Booking = {
+      ...booking,
+      status: nextStatus,
+      workflowStage: nextWorkflowStage,
+      invoiceNumber: generatedInvoiceNo,
+      invoiceReady: isCompleting ? true : booking.invoiceReady,
+      advancePaid: updatedAdvancePaid,
+      balanceAmount: updatedBalance,
+    };
 
     const updated = bookings.map((b) =>
-      b.bookingId === booking.bookingId
-        ? {
-            ...b,
-            status: nextStatus,
-            invoiceNumber: generatedInvoiceNo,
-            invoiceReady: isCompleting ? true : b.invoiceReady,
-            advancePaid: updatedAdvancePaid,
-            balanceAmount: updatedBalance,
-          }
-        : b
+      b.bookingId === booking.bookingId ? updatedRecord : b
     );
     setBookings(updated);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updated));
 
     if (myRidesPreviewTarget?.bookingId === booking.bookingId) {
-      setMyRidesPreviewTarget({
-        ...booking,
-        status: nextStatus,
-        invoiceNumber: generatedInvoiceNo,
-        invoiceReady: isCompleting ? true : booking.invoiceReady,
-        advancePaid: updatedAdvancePaid,
-        balanceAmount: updatedBalance,
-      });
+      setMyRidesPreviewTarget(updatedRecord);
     }
 
     showToast(
@@ -882,25 +929,83 @@ function AdminDashboard() {
         : `Updated ${booking.bookingId} status to ${nextStatus}.`
     );
 
-    if (isFirebaseVerifiedSession && user) {
-      const path = `bookings/${booking.bookingId}`;
-      try {
-        await updateDoc(doc(db, 'bookings', booking.bookingId), {
-          status: nextStatus,
-          invoiceNumber: sanitizeString(
-            generatedInvoiceNo,
-            BLUEPRINT_CONSTRAINTS.MAX_INVOICE_NUMBER
-          ),
-          invoiceReady: isCompleting ? true : booking.invoiceReady,
-          advancePaid: updatedAdvancePaid,
-          balanceAmount: updatedBalance,
-          paymentMode: booking.paymentMode,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        logFirestoreSyncWarning(err, OperationType.UPDATE, path);
-      }
+    await persistBookingToFirestore(updatedRecord, updated);
+  };
+
+  // Quick inline Toll Tax, State Permit Tax & Status update handler
+  const handleQuickUpdateStatusAndTaxes = async (
+    booking: Booking,
+    updates: {
+      status?: BookingStatus;
+      tollTax?: number;
+      stateTax?: number;
     }
+  ) => {
+    const nextStatus = updates.status ?? booking.status;
+    const nextToll = clampNumber(
+      updates.tollTax ?? booking.tollTax ?? 0,
+      0,
+      500000
+    );
+    const nextState = clampNumber(
+      updates.stateTax ?? booking.stateTax ?? 0,
+      0,
+      500000
+    );
+
+    const taxable = Math.max(
+      0,
+      booking.baseFare +
+        booking.driverAllowance +
+        nextToll +
+        nextState +
+        (booking.nightCharges || 0) -
+        (booking.marketDiscount || 0)
+    );
+    const nextGst = Math.round(taxable * 0.05);
+    const nextTotal = taxable + nextGst;
+    const isCompleting = nextStatus === 'Completed';
+    const nextAdvance = isCompleting ? nextTotal : booking.advancePaid;
+    const nextBalance = isCompleting
+      ? 0
+      : Math.max(0, nextTotal - booking.advancePaid);
+    const nextInvoiceNo = isCompleting
+      ? booking.invoiceNumber ||
+        `INV-SIC-2611-${booking.bookingId.replace('SIC', '')}`
+      : booking.invoiceNumber;
+
+    const updatedRecord: Booking = {
+      ...booking,
+      status: nextStatus,
+      workflowStage:
+        nextStatus === 'Completed'
+          ? 'Trip Completed'
+          : nextStatus === 'Active'
+            ? 'Trip Started'
+            : nextStatus === 'Confirmed'
+              ? 'Driver Assigned'
+              : 'Requested',
+      tollTax: nextToll,
+      stateTax: nextState,
+      gstAmount: nextGst,
+      totalFare: nextTotal,
+      advancePaid: nextAdvance,
+      balanceAmount: nextBalance,
+      invoiceNumber: nextInvoiceNo,
+      invoiceReady: isCompleting ? true : booking.invoiceReady,
+    };
+
+    const updatedList = bookings.map((b) =>
+      b.bookingId === booking.bookingId ? updatedRecord : b
+    );
+    setBookings(updatedList);
+    localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
+
+    showToast(
+      `Updated ${booking.bookingId}: Status → ${nextStatus} · Toll ₹${nextToll} · State Tax ₹${nextState} · Total ${formatINR(nextTotal)}.`
+    );
+
+    await persistBookingToFirestore(updatedRecord, updatedList);
   };
 
   // Save updated booking from 9-stage Booking Detail & Workflow Modal
@@ -911,36 +1016,11 @@ function AdminDashboard() {
     setBookings(updatedList);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
     setBookingDetailTarget(updatedBooking);
+    showToast(
+      `Saved ${updatedBooking.bookingId} (${updatedBooking.status}) with Toll ₹${updatedBooking.tollTax || 0} & State Tax ₹${updatedBooking.stateTax}.`
+    );
 
-    if (isFirebaseVerifiedSession && user) {
-      const path = `bookings/${updatedBooking.bookingId}`;
-      try {
-        await updateDoc(doc(db, 'bookings', updatedBooking.bookingId), {
-          status: updatedBooking.status,
-          pickupCity: updatedBooking.pickupCity,
-          dropCity: updatedBooking.dropCity,
-          pickupDate: updatedBooking.pickupDate,
-          pickupTime: updatedBooking.pickupTime,
-          distanceKm: updatedBooking.distanceKm,
-          tripDays: updatedBooking.tripDays,
-          baseFare: updatedBooking.baseFare,
-          driverAllowance: updatedBooking.driverAllowance,
-          stateTax: updatedBooking.stateTax,
-          nightCharges: updatedBooking.nightCharges,
-          marketDiscount: updatedBooking.marketDiscount,
-          gstAmount: updatedBooking.gstAmount,
-          totalFare: updatedBooking.totalFare,
-          advancePaid: updatedBooking.advancePaid,
-          balanceAmount: updatedBooking.balanceAmount,
-          paymentMode: updatedBooking.paymentMode,
-          invoiceNumber: updatedBooking.invoiceNumber,
-          invoiceReady: updatedBooking.invoiceReady,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (err) {
-        logFirestoreSyncWarning(err, OperationType.UPDATE, path);
-      }
-    }
+    await persistBookingToFirestore(updatedBooking, updatedList);
   };
 
   // Save single vehicle category tariff
@@ -1357,7 +1437,8 @@ function AdminDashboard() {
         (statusFilter === 'Driver Allotted' &&
           hasDriver &&
           b.status !== 'Cancelled') ||
-        (statusFilter === 'Active' && b.status === 'Confirmed') ||
+        (statusFilter === 'Active' &&
+          (b.status === 'Active' || b.status === 'Confirmed')) ||
         (statusFilter === 'Completed' && b.status === 'Completed') ||
         (statusFilter === 'Cancelled' && b.status === 'Cancelled');
 
@@ -2282,6 +2363,7 @@ function AdminDashboard() {
                 }));
                 setShowSyncIncomingModal(true);
               }}
+              onQuickUpdateStatusAndTaxes={handleQuickUpdateStatusAndTaxes}
             />
           )}
 
@@ -2843,6 +2925,10 @@ function AdminDashboard() {
                                   <div className="font-bold text-slate-600 dark:text-slate-400 mt-0.5">
                                     Collect: {formatINR(booking.balanceAmount)}
                                   </div>
+                                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+                                    Toll: {formatINR(booking.tollTax || 0)} · State:{' '}
+                                    {formatINR(booking.stateTax)}
+                                  </div>
                                 </td>
 
                                 <td className="py-4 px-4 align-top">
@@ -2850,16 +2936,38 @@ function AdminDashboard() {
                                     className={`inline-block px-2.5 py-1 rounded-lg font-extrabold ${
                                       booking.status === 'Completed'
                                         ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                        : booking.status === 'Confirmed'
-                                        ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/70 dark:text-blue-300'
-                                        : booking.status === 'Cancelled'
-                                        ? 'bg-red-100 text-red-900 dark:bg-red-950/70 dark:text-red-300'
-                                        : 'bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300'
+                                        : booking.status === 'Active' ||
+                                            booking.status === 'Confirmed'
+                                          ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/70 dark:text-blue-300'
+                                          : booking.status === 'Cancelled'
+                                            ? 'bg-red-100 text-red-900 dark:bg-red-950/70 dark:text-red-300'
+                                            : 'bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300'
                                     }`}
                                   >
                                     {booking.status}
                                   </span>
-                                  <div className="font-bold text-slate-500 dark:text-slate-400 mt-1">
+                                  {/* 1-Click Status Progression Bar: Pending -> Active -> Completed */}
+                                  <div className="flex items-center gap-1 mt-1.5">
+                                    {(
+                                      ['Pending', 'Active', 'Completed'] as const
+                                    ).map((st) => (
+                                      <button
+                                        key={st}
+                                        type="button"
+                                        onClick={() =>
+                                          handleStatusChange(booking, st)
+                                        }
+                                        className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold border cursor-pointer ${
+                                          booking.status === st
+                                            ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 border-slate-900 dark:border-amber-500'
+                                            : 'bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-500'
+                                        }`}
+                                      >
+                                        {st}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="font-bold text-slate-500 dark:text-slate-400 mt-1 text-[11px]">
                                     {booking.invoiceReady
                                       ? `GST Inv Ready (${booking.invoiceNumber})`
                                       : 'GST Inv Ready on Complete'}

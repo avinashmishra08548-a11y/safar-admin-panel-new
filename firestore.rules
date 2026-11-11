@@ -47,7 +47,7 @@ service cloud.firestore {
         (!('customerGstin' in data) || (data.customerGstin is string && data.customerGstin.size() >= 0 && data.customerGstin.size() <= 20)) &&
         data.tripType is string && data.tripType.size() <= 30 && data.tripType in ['Round Trip Outstation', 'One Way Outstation', 'Local 8Hr/80Km', 'Airport Transfer'] &&
         data.pickupCity is string && data.pickupCity.size() >= 2 && data.pickupCity.size() <= 120 &&
-        data.dropCity is string && data.dropCity.size() >= 2 && data.dropCity.size() >= 120 &&
+        data.dropCity is string && data.dropCity.size() >= 2 && data.dropCity.size() <= 120 &&
         data.pickupDate is string && data.pickupDate.size() == 10 && data.pickupDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
         data.pickupTime is string && data.pickupTime.size() >= 4 && data.pickupTime.size() <= 12 &&
         data.vehicleCategory is string && data.vehicleCategory.size() <= 20 && data.vehicleCategory in ['Hatchback', 'Sedan', 'SUV', 'Innova Crysta'];
@@ -77,7 +77,7 @@ service cloud.firestore {
         (!('paymentMode' in data) || (data.paymentMode is string && data.paymentMode.size() <= 20 && data.paymentMode in ['20% Advance', 'Full Paid'])) &&
         data.advancePaid is number && data.advancePaid >= 0 && data.advancePaid <= 6000000 &&
         data.balanceAmount is number && data.balanceAmount >= 0 && data.balanceAmount <= 6000000 &&
-        data.status is string && data.status.size() <= 15 && data.status in ['Pending', 'Confirmed', 'Completed', 'Cancelled'] &&
+        data.status is string && data.status.size() <= 15 && data.status in ['Pending', 'Confirmed', 'Active', 'Completed', 'Cancelled'] &&
         (!('driverName' in data) || (data.driverName is string && data.driverName.size() >= 0 && data.driverName.size() <= 80)) &&
         (!('driverPhone' in data) || (data.driverPhone is string && data.driverPhone.size() >= 0 && data.driverPhone.size() <= 16)) &&
         (!('vehicleNumber' in data) || (data.vehicleNumber is string && data.vehicleNumber.size() >= 0 && data.vehicleNumber.size() <= 20)) &&
@@ -225,10 +225,12 @@ service cloud.firestore {
             existing().status != 'Cancelled' &&
             (
               incoming().diff(existing()).affectedKeys().hasOnly([
-                'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel', 'status', 'updatedAt'
+                'driverName', 'driverPhone', 'vehicleNumber', 'vehicleModel', 'status', 'workflowStage',
+                'tollTax', 'stateTax', 'driverAllowance', 'baseFare', 'gstAmount', 'totalFare',
+                'advancePaid', 'balanceAmount', 'paymentMode', 'invoiceNumber', 'invoiceReady', 'updatedAt'
               ]) ||
               incoming().diff(existing()).affectedKeys().hasOnly([
-                'status', 'invoiceNumber', 'invoiceReady', 'advancePaid', 'balanceAmount', 'paymentMode', 'updatedAt'
+                'status', 'workflowStage', 'invoiceNumber', 'invoiceReady', 'advancePaid', 'balanceAmount', 'paymentMode', 'updatedAt'
               ])
             )
           )

@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Booking,
+  BookingStatus,
+  clampNumber,
   formatINR,
 } from '../types/safar';
 import {
@@ -25,6 +27,7 @@ import {
   RefreshCw,
   Clock,
   ShieldCheck,
+  Save,
 } from 'lucide-react';
 
 interface BookingIdFirestoreSearchBarProps {
@@ -36,6 +39,14 @@ interface BookingIdFirestoreSearchBarProps {
   onOpenBillStudio: (booking: Booking) => void;
   onOpenWhatsAppDispatch: (booking: Booking) => void;
   onOpenSyncCustomerModal: () => void;
+  onQuickUpdateStatusAndTaxes?: (
+    booking: Booking,
+    updates: {
+      status?: BookingStatus;
+      tollTax?: number;
+      stateTax?: number;
+    }
+  ) => Promise<void>;
 }
 
 export const BookingIdFirestoreSearchBar: React.FC<
@@ -49,12 +60,18 @@ export const BookingIdFirestoreSearchBar: React.FC<
   onOpenBillStudio,
   onOpenWhatsAppDispatch,
   onOpenSyncCustomerModal,
+  onQuickUpdateStatusAndTaxes,
 }) => {
   const [bookingIdQuery, setBookingIdQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] =
     useState<FirestoreBookingSearchResult | null>(null);
   const [lastSearchedQuery, setLastSearchedQuery] = useState('');
+
+  // Inline Toll & State Tax editing inside the verified search card
+  const [editTollTax, setEditTollTax] = useState<number>(0);
+  const [editStateTax, setEditStateTax] = useState<number>(0);
+  const [updatingBilling, setUpdatingBilling] = useState(false);
 
   const handleExecuteFirestoreSearch = async (
     overrideId?: string,
@@ -87,9 +104,54 @@ export const BookingIdFirestoreSearchBar: React.FC<
       searchResult.booking
     : null;
 
+  useEffect(() => {
+    if (activeBooking) {
+      setEditTollTax(activeBooking.tollTax ?? 0);
+      setEditStateTax(activeBooking.stateTax ?? 0);
+    }
+  }, [
+    activeBooking?.bookingId,
+    activeBooking?.tollTax,
+    activeBooking?.stateTax,
+  ]);
+
   const hasAssignedDriver = Boolean(
     activeBooking?.driverName && activeBooking?.vehicleNumber
   );
+
+  // Live recalculated fare preview when Toll Tax or State Tax is adjusted in the search card
+  const previewTaxable = activeBooking
+    ? Math.max(
+        0,
+        activeBooking.baseFare +
+          activeBooking.driverAllowance +
+          clampNumber(editTollTax, 0, 500000) +
+          clampNumber(editStateTax, 0, 500000) +
+          (activeBooking.nightCharges || 0) -
+          (activeBooking.marketDiscount || 0)
+      )
+    : 0;
+  const previewGst = Math.round(previewTaxable * 0.05);
+  const previewTotal = previewTaxable + previewGst;
+  const previewBalance = activeBooking
+    ? activeBooking.status === 'Completed'
+      ? 0
+      : Math.max(0, previewTotal - activeBooking.advancePaid)
+    : 0;
+
+  const handleSaveTaxesAndStatus = async (nextStatus?: BookingStatus) => {
+    if (!activeBooking || !onQuickUpdateStatusAndTaxes) return;
+    setUpdatingBilling(true);
+    try {
+      await onQuickUpdateStatusAndTaxes(activeBooking, {
+        status: nextStatus ?? activeBooking.status,
+        tollTax: clampNumber(editTollTax, 0, 500000),
+        stateTax: clampNumber(editStateTax, 0, 500000),
+      });
+    } finally {
+      setUpdatingBilling(false);
+    }
+  };
 
   const formatTimestamp = (ts: unknown): string => {
     if (!ts) return 'Synced Live (Real-Time)';
@@ -135,7 +197,11 @@ export const BookingIdFirestoreSearchBar: React.FC<
             <span className="font-mono font-extrabold text-slate-900 dark:text-amber-400">
               SIC2604
             </span>
-            ) to query Firebase Firestore directly and view full trip, fare split & chauffeur status
+            ,{' '}
+            <span className="font-mono font-extrabold text-slate-900 dark:text-amber-400">
+              SIC5442
+            </span>
+            ) or Customer Phone to query Firebase Firestore directly and view full trip, route, phone, toll/state tax & chauffeur status
           </p>
         </div>
 
@@ -149,7 +215,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
               type="text"
               value={bookingIdQuery}
               onChange={(e) => setBookingIdQuery(e.target.value.toUpperCase())}
-              placeholder="Enter Booking ID (e.g. SIC2604)..."
+              placeholder="Enter Booking ID (SIC2604) or Phone..."
               className="w-full pl-9 pr-8 py-2.5 text-xs font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder:font-sans placeholder:font-bold placeholder:text-slate-400 focus:outline-none focus:border-amber-500"
             />
             {bookingIdQuery && (
@@ -207,7 +273,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
                   : 'bg-slate-100 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:border-amber-500'
               }`}
             >
-              {b.bookingId} · {b.customerName.split(' ')[0]}
+              {b.bookingId} · {b.customerName.split(' ')[0]} ({b.status})
             </button>
           ))}
         </div>
@@ -258,11 +324,12 @@ export const BookingIdFirestoreSearchBar: React.FC<
                 className={`px-2.5 py-1 rounded-lg text-xs font-extrabold ${
                   activeBooking.status === 'Completed'
                     ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300'
-                    : activeBooking.status === 'Confirmed'
-                    ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/80 dark:text-blue-300'
-                    : activeBooking.status === 'Cancelled'
-                    ? 'bg-red-100 text-red-900 dark:bg-red-950/80 dark:text-red-300'
-                    : 'bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300'
+                    : activeBooking.status === 'Active' ||
+                        activeBooking.status === 'Confirmed'
+                      ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/80 dark:text-blue-300'
+                      : activeBooking.status === 'Cancelled'
+                        ? 'bg-red-100 text-red-900 dark:bg-red-950/80 dark:text-red-300'
+                        : 'bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-300'
                 }`}
               >
                 Status: {activeBooking.status}
@@ -296,7 +363,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
               <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
                 <span>1. Customer Contact Info</span>
                 <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                  {activeBooking.bookingSource || 'Customer App'}
+                  {activeBooking.bookingSource || 'safarindiacabs.com'}
                 </span>
               </div>
               <div className="text-sm font-extrabold text-slate-900 dark:text-white">
@@ -339,7 +406,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
             {/* Column 2: Trip & Route Details */}
             <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 space-y-2">
               <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                2. Trip & Route Breakdown
+                2. Specific Ride & Route Info
               </div>
               <div className="font-extrabold text-slate-900 dark:text-white flex items-start gap-1.5">
                 <MapPin className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
@@ -391,10 +458,10 @@ export const BookingIdFirestoreSearchBar: React.FC<
               </div>
             </div>
 
-            {/* Column 3: Itemized Fare Split */}
-            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 space-y-1.5">
+            {/* Column 3: Itemized Fare Split + Toll/State Tax Input Fields for Final Billing */}
+            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 space-y-2">
               <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                3. Itemized Fare Split
+                3. Fare Split & Final Toll/State Tax
               </div>
               <div className="space-y-1 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
                 <div className="flex justify-between">
@@ -407,52 +474,82 @@ export const BookingIdFirestoreSearchBar: React.FC<
                   <span>Driver Allowance (Bata):</span>
                   <span>{formatINR(activeBooking.driverAllowance)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Highway Toll Tax:</span>
-                  <span>{formatINR(activeBooking.tollTax || 0)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>State Permit Tax:</span>
-                  <span>{formatINR(activeBooking.stateTax)}</span>
-                </div>
-                {activeBooking.nightCharges > 0 && (
-                  <div className="flex justify-between">
-                    <span>Night Charges:</span>
-                    <span>{formatINR(activeBooking.nightCharges)}</span>
+
+                {/* Editable Highway Toll Tax & State Permit Tax Input Fields */}
+                <div className="grid grid-cols-2 gap-1.5 pt-1 pb-1">
+                  <div>
+                    <label className="block text-[10px] font-sans font-extrabold text-slate-600 dark:text-slate-400">
+                      Toll Tax (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={500000}
+                      value={editTollTax}
+                      onChange={(e) =>
+                        setEditTollTax(Number(e.target.value) || 0)
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                    />
                   </div>
-                )}
-                {activeBooking.marketDiscount > 0 && (
-                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                    <span>Promotional Discount:</span>
-                    <span>-{formatINR(activeBooking.marketDiscount)}</span>
+                  <div>
+                    <label className="block text-[10px] font-sans font-extrabold text-slate-600 dark:text-slate-400">
+                      State Tax (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={500000}
+                      value={editStateTax}
+                      onChange={(e) =>
+                        setEditStateTax(Number(e.target.value) || 0)
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-extrabold bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white"
+                    />
                   </div>
-                )}
+                </div>
+
                 <div className="flex justify-between">
                   <span>GST (5% SAC 996412):</span>
-                  <span>{formatINR(activeBooking.gstAmount)}</span>
+                  <span>{formatINR(previewGst)}</span>
                 </div>
               </div>
-              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1 font-mono">
+              <div className="pt-1.5 border-t border-slate-200 dark:border-slate-800 space-y-1 font-mono">
                 <div className="flex justify-between text-xs font-extrabold text-slate-900 dark:text-white">
-                  <span>Total Booking Fare:</span>
-                  <span>{formatINR(activeBooking.totalFare)}</span>
+                  <span>Total Final Fare:</span>
+                  <span>{formatINR(previewTotal)}</span>
                 </div>
                 <div className="flex justify-between text-[11px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                  <span>Advance Paid ({activeBooking.paymentMode}):</span>
+                  <span>Advance Paid:</span>
                   <span>{formatINR(activeBooking.advancePaid)}</span>
                 </div>
                 <div className="flex justify-between text-[11px] font-extrabold text-amber-700 dark:text-amber-400">
-                  <span>Driver Collect Balance:</span>
-                  <span>{formatINR(activeBooking.balanceAmount)}</span>
+                  <span>Collect Balance:</span>
+                  <span>{formatINR(previewBalance)}</span>
                 </div>
               </div>
+              {onQuickUpdateStatusAndTaxes && (
+                <button
+                  type="button"
+                  disabled={updatingBilling}
+                  onClick={() => handleSaveTaxesAndStatus()}
+                  className="w-full py-1.5 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-[11px] inline-flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Save className="w-3 h-3" />
+                  <span>
+                    {updatingBilling
+                      ? 'Saving Billing...'
+                      : 'Save Toll & State Tax'}
+                  </span>
+                </button>
+              )}
             </div>
 
-            {/* Column 4: Driver Assignment Status & Instant Dispatch Actions */}
+            {/* Column 4: Driver Assignment Status & Smooth Pending -> Active -> Completed Progression */}
             <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 flex flex-col justify-between space-y-3">
               <div className="space-y-2">
                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  4. Driver & Cab Assignment
+                  4. Chauffeur & Status Progression
                 </div>
                 {hasAssignedDriver ? (
                   <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 space-y-1">
@@ -473,8 +570,40 @@ export const BookingIdFirestoreSearchBar: React.FC<
                       Pending Driver Allotment
                     </div>
                     <p className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-                      No chauffeur or vehicle plate has been allotted yet. Click below to assign a driver.
+                      Click below to allot a verified chauffeur & vehicle plate.
                     </p>
+                  </div>
+                )}
+
+                {/* 1-Click Status Progression: Pending -> Active -> Completed */}
+                {onQuickUpdateStatusAndTaxes && (
+                  <div className="space-y-1 pt-1">
+                    <div className="text-[10px] font-extrabold uppercase text-slate-500">
+                      Status Progression (Pending → Active → Completed)
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(
+                        [
+                          { st: 'Pending', label: 'Pending' },
+                          { st: 'Active', label: 'Active' },
+                          { st: 'Completed', label: 'Completed' },
+                        ] as const
+                      ).map((step) => (
+                        <button
+                          key={step.st}
+                          type="button"
+                          disabled={updatingBilling}
+                          onClick={() => handleSaveTaxesAndStatus(step.st)}
+                          className={`py-1 px-1.5 rounded-lg text-[11px] font-extrabold border cursor-pointer ${
+                            activeBooking.status === step.st
+                              ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 border-slate-900 dark:border-amber-500'
+                              : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-500'
+                          }`}
+                        >
+                          {step.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -488,7 +617,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
                   <UserPlus className="w-3.5 h-3.5" />
                   <span>
                     {hasAssignedDriver
-                      ? 'Change Assigned Driver'
+                      ? 'Reassign Driver & Toll/Tax'
                       : 'Assign Driver & Vehicle'}
                   </span>
                 </button>
