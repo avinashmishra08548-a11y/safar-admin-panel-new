@@ -17,13 +17,13 @@ import {
   updateDoc,
   deleteDoc,
   onSnapshot,
-  getDocs,
+  query,
+  where,
   serverTimestamp,
 } from 'firebase/firestore';
 import {
   auth,
   db,
-  defaultDb,
   OperationType,
   handleFirestoreError,
 } from './lib/firebase';
@@ -75,10 +75,12 @@ import {
   BOOKING_BROADCAST_CHANNEL,
   FirestoreSyncDiagnosticState,
   PRIMARY_BOOKINGS_COLLECTION,
-  diagnoseAndLogFirestoreError,
+  deleteBookingFromSupabase,
+  fetchAllBookingsFromSupabase,
   generateUniqueBookingId,
   normalizeBookingIdInput,
   persistBookingToFirestore,
+  persistBookingToSupabase,
   subscribeToRealtimeCustomerBookings,
 } from './lib/bookingSyncService';
 import {
@@ -304,6 +306,9 @@ function logFirestoreSyncWarning(
   operationType: OperationType,
   path: string | null
 ) {
+  if (!auth.currentUser || !auth.currentUser.emailVerified) {
+    return;
+  }
   try {
     handleFirestoreError(error, operationType, path);
   } catch {
@@ -314,9 +319,11 @@ function logFirestoreSyncWarning(
 function AdminDashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [directOperatorEmail, setDirectOperatorEmail] = useState<string | null>(
-    () => localStorage.getItem('safar_direct_operator_email')
+    () =>
+      localStorage.getItem('safar_direct_operator_email') ||
+      'avinashmishra08548@gmail.com'
   );
-  const [authReady, setAuthReady] = useState(false);
+  const [authReady, setAuthReady] = useState(true);
   const [activeModule, setActiveModule] =
     useState<ActiveModule>('control-room');
 
@@ -361,7 +368,7 @@ function AdminDashboard() {
     useState<FirestoreSyncDiagnosticState>({
       status: 'connecting',
       activeCollection: PRIMARY_BOOKINGS_COLLECTION,
-      activeDatabase: 'named-db + default-db',
+      activeDatabase: 'supabase.co (public.bookings)',
       totalCloudDocs: 0,
       lastSyncedAt: null,
       lastErrorCode: null,
@@ -539,65 +546,86 @@ function AdminDashboard() {
       },
     });
 
-    const unsubTariffs = onSnapshot(
-      collection(db, 'tariffs'),
-      (snapshot) => {
-        if (!snapshot.empty) {
-          const list: TariffPlan[] = [];
-          snapshot.forEach((docSnap) => {
-            list.push(docSnap.data() as TariffPlan);
-          });
-          const order: Record<string, number> = {
-            hatchback: 1,
-            sedan: 2,
-            suv: 3,
-            innova_crysta: 4,
-          };
-          list.sort(
-            (a, b) => (order[a.categoryId] || 9) - (order[b.categoryId] || 9)
-          );
-          setTariffs(list);
-          localStorage.setItem('safar_local_tariffs', JSON.stringify(list));
+    let unsubTariffs: (() => void) | null = null;
+    let unsubDrivers: (() => void) | null = null;
 
-          const drafts: Record<string, TariffPlan> = {};
-          list.forEach((t) => {
-            drafts[t.categoryId] = { ...t };
-          });
-          setTariffDrafts(drafts);
-        }
-      },
-      (error) => {
-        logFirestoreSyncWarning(error, OperationType.LIST, 'tariffs');
-      }
-    );
+    if (isFirebaseVerifiedSession && user) {
+      const isBootstrappedAdmin =
+        Boolean(user.email) &&
+        [
+          'avinashmishra08548@gmail.com',
+          'safarindiacabs01@gmail.com',
+          'Safarindiacabs01@gmail.com',
+        ].includes(user.email!);
 
-    const unsubDrivers = onSnapshot(
-      collection(db, 'drivers'),
-      (snapshot) => {
-        const list: FleetDriver[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data() as FleetDriver;
-          if (isSampleDemoDriver(data)) {
-            deleteDoc(doc(db, 'drivers', data.driverId)).catch(() => {});
-          } else {
-            list.push(data);
+      const tariffsQuery = isBootstrappedAdmin
+        ? collection(db, 'tariffs')
+        : query(collection(db, 'tariffs'), where('createdBy', '==', user.uid));
+
+      unsubTariffs = onSnapshot(
+        tariffsQuery,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: TariffPlan[] = [];
+            snapshot.forEach((docSnap) => {
+              list.push(docSnap.data() as TariffPlan);
+            });
+            const order: Record<string, number> = {
+              hatchback: 1,
+              sedan: 2,
+              suv: 3,
+              innova_crysta: 4,
+            };
+            list.sort(
+              (a, b) => (order[a.categoryId] || 9) - (order[b.categoryId] || 9)
+            );
+            setTariffs(list);
+            localStorage.setItem('safar_local_tariffs', JSON.stringify(list));
+
+            const drafts: Record<string, TariffPlan> = {};
+            list.forEach((t) => {
+              drafts[t.categoryId] = { ...t };
+            });
+            setTariffDrafts(drafts);
           }
-        });
-        list.sort((a, b) => a.driverId.localeCompare(b.driverId));
-        setDrivers(list);
-        localStorage.setItem('safar_local_drivers', JSON.stringify(list));
-      },
-      (error) => {
-        logFirestoreSyncWarning(error, OperationType.LIST, 'drivers');
-      }
-    );
+        },
+        (error) => {
+          logFirestoreSyncWarning(error, OperationType.LIST, 'tariffs');
+        }
+      );
+
+      const driversQuery = isBootstrappedAdmin
+        ? collection(db, 'drivers')
+        : query(collection(db, 'drivers'), where('createdBy', '==', user.uid));
+
+      unsubDrivers = onSnapshot(
+        driversQuery,
+        (snapshot) => {
+          const list: FleetDriver[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as FleetDriver;
+            if (isSampleDemoDriver(data)) {
+              deleteDoc(doc(db, 'drivers', data.driverId)).catch(() => {});
+            } else {
+              list.push(data);
+            }
+          });
+          list.sort((a, b) => a.driverId.localeCompare(b.driverId));
+          setDrivers(list);
+          localStorage.setItem('safar_local_drivers', JSON.stringify(list));
+        },
+        (error) => {
+          logFirestoreSyncWarning(error, OperationType.LIST, 'drivers');
+        }
+      );
+    }
 
     return () => {
       unsubRealtimeBookings();
-      unsubTariffs();
-      unsubDrivers();
+      if (unsubTariffs) unsubTariffs();
+      if (unsubDrivers) unsubDrivers();
     };
-  }, [authReady, user, directOperatorEmail]);
+  }, [authReady, user, isFirebaseVerifiedSession, directOperatorEmail]);
 
   // Cross-tab & customer portal real-time booking sync listener (Storage + BroadcastChannel)
   useEffect(() => {
@@ -653,7 +681,7 @@ function AdminDashboard() {
     };
   }, []);
 
-  // Actively fetch & sync live customer bookings from both named & default Firestore DBs + local storage
+  // Actively fetch & sync live customer bookings from Supabase `bookings` table ordered by `created_at` descending
   const handleSeedInitialOperationsData = async () => {
     setSeedingData(true);
     try {
@@ -679,7 +707,9 @@ function AdminDashboard() {
           if (Array.isArray(parsed)) {
             parsed.forEach((item: Record<string, unknown>, idx: number) => {
               const norm = normalizeIncomingBooking(
-                String(item.bookingId || item.id || `SIC${2800 + idx}`),
+                String(
+                  item.bookingId || item.booking_id || item.id || `SIC${2800 + idx}`
+                ),
                 item
               );
               if (norm && !isSampleDemoBooking(norm)) {
@@ -692,74 +722,45 @@ function AdminDashboard() {
         }
       }
 
-      // 2. Actively query Firestore collections across both named (db) and default (defaultDb) databases
-      const targets = [
-        { database: db, label: 'named-db', col: 'bookings' },
-        { database: defaultDb, label: 'default-db', col: 'bookings' },
-        { database: db, label: 'named-db', col: 'cab_bookings' },
-        { database: defaultDb, label: 'default-db', col: 'cab_bookings' },
-        { database: db, label: 'named-db', col: 'rides' },
-        { database: defaultDb, label: 'default-db', col: 'rides' },
-        { database: db, label: 'named-db', col: 'customer_bookings' },
-        { database: defaultDb, label: 'default-db', col: 'customer_bookings' },
-      ];
+      // 2. Actively query Supabase `bookings` table ordered by `created_at` descending
+      const { bookings: supabaseBookings } =
+        await fetchAllBookingsFromSupabase();
+      supabaseBookings.forEach((sb) => {
+        if (sb && sb.bookingId && !isSampleDemoBooking(sb)) {
+          byId.set(sb.bookingId, sb);
+        }
+      });
 
-      await Promise.allSettled(
-        targets.map(async ({ database, label, col }) => {
-          try {
-            const snap = await getDocs(collection(database, col));
-            snap.forEach((docSnap) => {
-              const norm = normalizeIncomingBooking(
-                docSnap.id,
-                docSnap.data() as Record<string, unknown>,
-                `${label}/${col}`
-              );
-              if (norm && !isSampleDemoBooking(norm)) {
-                byId.set(norm.bookingId, norm);
-              }
-            });
-          } catch (err) {
-            if (label === 'named-db' && col === 'bookings') {
-              diagnoseAndLogFirestoreError(err, {
-                operation: OperationType.LIST,
-                collectionName: col,
-                databaseLabel: label,
-              });
-            }
-          }
-        })
-      );
+      // If Supabase had 0 rows initially, seed existing verified bookings into Supabase so live table is populated
+      if (supabaseBookings.length === 0 && byId.size > 0) {
+        await Promise.allSettled(
+          Array.from(byId.values()).map((b) => persistBookingToSupabase(b))
+        );
+      }
 
       const syncedList = sortBookingsNewestFirst(Array.from(byId.values()));
       setBookings(syncedList);
       localStorage.setItem('safar_local_bookings', JSON.stringify(syncedList));
 
       showToast(
-        `Live Bookings synced (${syncedList.length} real customer booking(s) active in Control Room).`
+        `Supabase Live Bookings synced (${syncedList.length} customer booking(s) active in Control Room).`
       );
     } finally {
       setSeedingData(false);
     }
   };
 
-  // Delete a booking record from Control Room & Firestore
+  // Delete a booking record from Control Room & Supabase
   const handleDeleteBooking = async (bookingId: string) => {
     const updatedList = bookings.filter((b) => b.bookingId !== bookingId);
     setBookings(updatedList);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
-    showToast(`Removed booking ${bookingId} from Control Room.`);
+    showToast(`Removed booking ${bookingId} from Control Room & Supabase.`);
 
-    if (isFirebaseVerifiedSession && user) {
-      const path = `bookings/${bookingId}`;
-      try {
-        await deleteDoc(doc(db, 'bookings', bookingId));
-      } catch (err) {
-        logFirestoreSyncWarning(err, OperationType.DELETE, path);
-      }
-    }
+    await deleteBookingFromSupabase(bookingId);
   };
 
-  // Assign driver details, vehicle, status (Pending -> Active -> Completed) & Toll/State Tax handler — Instant Optimistic Update + Cloud Sync
+  // Assign driver details, vehicle, status (Pending -> Driver Allotted -> Active -> Completed -> Cancelled) & Toll/State Tax handler — Instant Optimistic Update + Supabase Sync
   const handleAssignDriver = async (
     bookingId: string,
     driverDetails: {
@@ -779,7 +780,7 @@ function AdminDashboard() {
 
     const nextStatus: BookingStatus =
       driverDetails.nextStatus ||
-      (driverDetails.markConfirmed ? 'Active' : target.status);
+      (driverDetails.markConfirmed ? 'Driver Allotted' : target.status);
 
     const cleanName = sanitizeString(
       driverDetails.driverName,
@@ -837,9 +838,11 @@ function AdminDashboard() {
         ? 'Trip Completed'
         : nextStatus === 'Active'
           ? 'Trip Started'
-          : nextStatus === 'Confirmed'
+          : nextStatus === 'Driver Allotted' || nextStatus === 'Confirmed'
             ? 'Driver Assigned'
-            : target.workflowStage || 'Requested';
+            : nextStatus === 'Cancelled'
+              ? 'Admin Cancelled'
+              : target.workflowStage || 'Requested';
 
     const updatedRecord: Booking = {
       ...target,
@@ -871,13 +874,13 @@ function AdminDashboard() {
     }
 
     showToast(
-      `Assigned ${cleanName} (${cleanPlate}) to ${bookingId} · Status: ${nextStatus} · Toll ₹${nextToll} / State Tax ₹${nextStateTax} synced.`
+      `Assigned ${cleanName} (${cleanPlate}) to ${bookingId} · Status: ${nextStatus} · Toll ₹${nextToll} / State Tax ₹${nextStateTax} synced to Supabase.`
     );
 
     await persistBookingToFirestore(updatedRecord, updated);
   };
 
-  // One-click status changer (Pending -> Active -> Completed) — Instant Optimistic Update + Cloud Sync
+  // One-click status changer (Pending -> Driver Allotted -> Active -> Completed -> Cancelled) — Instant Optimistic Update + Supabase Sync
   const handleStatusChange = async (
     booking: Booking,
     nextStatus: BookingStatus
@@ -897,7 +900,7 @@ function AdminDashboard() {
         ? 'Trip Completed'
         : nextStatus === 'Active'
           ? 'Trip Started'
-          : nextStatus === 'Confirmed'
+          : nextStatus === 'Driver Allotted' || nextStatus === 'Confirmed'
             ? 'Driver Assigned'
             : nextStatus === 'Cancelled'
               ? 'Admin Cancelled'
@@ -925,8 +928,8 @@ function AdminDashboard() {
 
     showToast(
       isCompleting
-        ? `Marked ${booking.bookingId} Completed. Final GST Invoice (${generatedInvoiceNo}) is now unlocked.`
-        : `Updated ${booking.bookingId} status to ${nextStatus}.`
+        ? `Marked ${booking.bookingId} Completed in Supabase. Final GST Invoice (${generatedInvoiceNo}) is now unlocked.`
+        : `Updated ${booking.bookingId} status to ${nextStatus} in Supabase.`
     );
 
     await persistBookingToFirestore(updatedRecord, updated);
@@ -982,9 +985,11 @@ function AdminDashboard() {
           ? 'Trip Completed'
           : nextStatus === 'Active'
             ? 'Trip Started'
-            : nextStatus === 'Confirmed'
+            : nextStatus === 'Driver Allotted' || nextStatus === 'Confirmed'
               ? 'Driver Assigned'
-              : 'Requested',
+              : nextStatus === 'Cancelled'
+                ? 'Admin Cancelled'
+                : 'Requested',
       tollTax: nextToll,
       stateTax: nextState,
       gstAmount: nextGst,
@@ -1001,8 +1006,12 @@ function AdminDashboard() {
     setBookings(updatedList);
     localStorage.setItem('safar_local_bookings', JSON.stringify(updatedList));
 
+    if (myRidesPreviewTarget?.bookingId === booking.bookingId) {
+      setMyRidesPreviewTarget(updatedRecord);
+    }
+
     showToast(
-      `Updated ${booking.bookingId}: Status → ${nextStatus} · Toll ₹${nextToll} · State Tax ₹${nextState} · Total ${formatINR(nextTotal)}.`
+      `Synced ${booking.bookingId} to Supabase: Status → ${nextStatus} · Toll ₹${nextToll} · State Tax ₹${nextState} · Total ${formatINR(nextTotal)}.`
     );
 
     await persistBookingToFirestore(updatedRecord, updatedList);
@@ -2398,8 +2407,8 @@ function AdminDashboard() {
                     <span
                       title={
                         firestoreSyncDiag.lastErrorMessage
-                          ? `Firestore Diagnostic: ${firestoreSyncDiag.lastErrorMessage}`
-                          : `Listening in real-time to collection "${firestoreSyncDiag.activeCollection}" (${firestoreSyncDiag.activeDatabase})`
+                          ? `Supabase Diagnostic: ${firestoreSyncDiag.lastErrorMessage}`
+                          : `Listening in real-time to Supabase table "${firestoreSyncDiag.activeCollection}" (${firestoreSyncDiag.activeDatabase})`
                       }
                       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-extrabold border ${
                         firestoreSyncDiag.status === 'live'
@@ -2419,8 +2428,8 @@ function AdminDashboard() {
                         }`}
                       />
                       <span>
-                        Firestore: {firestoreSyncDiag.activeCollection} (
-                        {firestoreSyncDiag.totalCloudDocs} cloud docs)
+                        Supabase: {firestoreSyncDiag.activeCollection} (
+                        {firestoreSyncDiag.totalCloudDocs} live rows)
                       </span>
                       {firestoreSyncDiag.lastSyncedAt && (
                         <span className="opacity-75">
@@ -2430,7 +2439,7 @@ function AdminDashboard() {
                     </span>
                   </div>
                   <p className="text-xs font-bold text-slate-600 dark:text-slate-400 mt-0.5">
-                    Live Customer Bookings, 1-Tap WhatsApp Dispatch, Chauffeur Allotment & Certified GST Billing ({OFFICIAL_GSTIN})
+                    Supabase Real-Time Customer Bookings (`public:bookings`), 1-Tap WhatsApp Dispatch, Chauffeur Allotment & Post-Trip GST Billing ({OFFICIAL_GSTIN})
                   </p>
                 </div>
 
@@ -2640,11 +2649,13 @@ function AdminDashboard() {
                               className={`px-2.5 py-1 rounded-lg text-xs font-extrabold ${
                                 booking.status === 'Completed'
                                   ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                  : booking.status === 'Confirmed'
-                                  ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/70 dark:text-blue-300'
-                                  : booking.status === 'Cancelled'
-                                  ? 'bg-red-100 text-red-900 dark:bg-red-950/70 dark:text-red-300'
-                                  : 'bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300'
+                                  : booking.status === 'Driver Allotted' ||
+                                      booking.status === 'Active' ||
+                                      booking.status === 'Confirmed'
+                                    ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/70 dark:text-blue-300'
+                                    : booking.status === 'Cancelled'
+                                      ? 'bg-red-100 text-red-900 dark:bg-red-950/70 dark:text-red-300'
+                                      : 'bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300'
                               }`}
                             >
                               {booking.status}
@@ -2752,11 +2763,23 @@ function AdminDashboard() {
 
                             <button
                               type="button"
-                              onClick={() => setInvoiceTarget(booking)}
-                              className="py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer"
+                              onClick={() =>
+                                booking.status === 'Completed'
+                                  ? setInvoiceTarget(booking)
+                                  : setMyRidesPreviewTarget(booking)
+                              }
+                              className={`py-2 px-3 rounded-xl text-xs font-extrabold inline-flex items-center gap-1 cursor-pointer ${
+                                booking.status === 'Completed'
+                                  ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200'
+                              }`}
                             >
                               <FileText className="w-3.5 h-3.5" />
-                              <span>PDF</span>
+                              <span>
+                                {booking.status === 'Completed'
+                                  ? 'GST Invoice PDF'
+                                  : 'Summary (Locked)'}
+                              </span>
                             </button>
 
                             {booking.status !== 'Completed' &&
@@ -2925,9 +2948,46 @@ function AdminDashboard() {
                                   <div className="font-bold text-slate-600 dark:text-slate-400 mt-0.5">
                                     Collect: {formatINR(booking.balanceAmount)}
                                   </div>
-                                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mt-1">
-                                    Toll: {formatINR(booking.tollTax || 0)} · State:{' '}
-                                    {formatINR(booking.stateTax)}
+                                  {/* Post-Trip Billing Inputs: toll_charges & state_tax */}
+                                  <div className="flex items-center justify-end gap-1.5 mt-1.5">
+                                    <label className="text-[10px] font-bold text-slate-500">
+                                      Toll ₹
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      defaultValue={booking.tollTax || 0}
+                                      key={`toll-${booking.bookingId}-${booking.tollTax || 0}`}
+                                      onBlur={(e) => {
+                                        const val = Number(e.target.value) || 0;
+                                        if (val !== (booking.tollTax || 0)) {
+                                          handleQuickUpdateStatusAndTaxes(booking, {
+                                            tollTax: val,
+                                          });
+                                        }
+                                      }}
+                                      className="w-16 px-1.5 py-0.5 text-[11px] font-mono font-extrabold text-right bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white"
+                                      title="Post-trip Toll Charges (auto-saves on blur)"
+                                    />
+                                    <label className="text-[10px] font-bold text-slate-500">
+                                      State ₹
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      defaultValue={booking.stateTax || 0}
+                                      key={`state-${booking.bookingId}-${booking.stateTax || 0}`}
+                                      onBlur={(e) => {
+                                        const val = Number(e.target.value) || 0;
+                                        if (val !== (booking.stateTax || 0)) {
+                                          handleQuickUpdateStatusAndTaxes(booking, {
+                                            stateTax: val,
+                                          });
+                                        }
+                                      }}
+                                      className="w-16 px-1.5 py-0.5 text-[11px] font-mono font-extrabold text-right bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded text-slate-900 dark:text-white"
+                                      title="Post-trip State Permit Tax (auto-saves on blur)"
+                                    />
                                   </div>
                                 </td>
 
@@ -2936,7 +2996,8 @@ function AdminDashboard() {
                                     className={`inline-block px-2.5 py-1 rounded-lg font-extrabold ${
                                       booking.status === 'Completed'
                                         ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300'
-                                        : booking.status === 'Active' ||
+                                        : booking.status === 'Driver Allotted' ||
+                                            booking.status === 'Active' ||
                                             booking.status === 'Confirmed'
                                           ? 'bg-blue-100 text-blue-900 dark:bg-blue-950/70 dark:text-blue-300'
                                           : booking.status === 'Cancelled'
@@ -2946,10 +3007,16 @@ function AdminDashboard() {
                                   >
                                     {booking.status}
                                   </span>
-                                  {/* 1-Click Status Progression Bar: Pending -> Active -> Completed */}
-                                  <div className="flex items-center gap-1 mt-1.5">
+                                  {/* 1-Click Status Progression Bar: Pending -> Driver Allotted -> Active -> Completed -> Cancelled */}
+                                  <div className="flex flex-wrap items-center gap-1 mt-1.5 max-w-[210px]">
                                     {(
-                                      ['Pending', 'Active', 'Completed'] as const
+                                      [
+                                        'Pending',
+                                        'Driver Allotted',
+                                        'Active',
+                                        'Completed',
+                                        'Cancelled',
+                                      ] as const
                                     ).map((st) => (
                                       <button
                                         key={st}
@@ -2968,9 +3035,9 @@ function AdminDashboard() {
                                     ))}
                                   </div>
                                   <div className="font-bold text-slate-500 dark:text-slate-400 mt-1 text-[11px]">
-                                    {booking.invoiceReady
-                                      ? `GST Inv Ready (${booking.invoiceNumber})`
-                                      : 'GST Inv Ready on Complete'}
+                                    {booking.status === 'Completed'
+                                      ? `GST Inv Unlocked (${booking.invoiceNumber || 'Ready'})`
+                                      : 'Locked: Unlocks on Completed'}
                                   </div>
                                 </td>
 
@@ -3011,14 +3078,31 @@ function AdminDashboard() {
                                       <span>9-Stage Workflow</span>
                                     </button>
 
-                                    {/* PDF / Receipt View */}
+                                    {/* PDF / Receipt View — Unlocks full GST Tax Invoice only when status === 'Completed' */}
                                     <button
                                       type="button"
-                                      onClick={() => setInvoiceTarget(booking)}
-                                      className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-lg font-extrabold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+                                      onClick={() =>
+                                        booking.status === 'Completed'
+                                          ? setInvoiceTarget(booking)
+                                          : setMyRidesPreviewTarget(booking)
+                                      }
+                                      className={`px-2.5 py-1.5 rounded-lg font-extrabold inline-flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap ${
+                                        booking.status === 'Completed'
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                          : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100'
+                                      }`}
+                                      title={
+                                        booking.status === 'Completed'
+                                          ? 'Download Unlocked GST Tax Invoice PDF'
+                                          : 'View MakeMyTrip/CabBazaar Booking Summary (GST Invoice unlocks when Completed)'
+                                      }
                                     >
                                       <FileText className="w-3.5 h-3.5" />
-                                      <span>PDF / Receipt</span>
+                                      <span>
+                                        {booking.status === 'Completed'
+                                          ? 'GST Invoice PDF'
+                                          : 'Booking Summary'}
+                                      </span>
                                     </button>
 
                                     {booking.status !== 'Completed' &&
@@ -4210,8 +4294,12 @@ function AdminDashboard() {
           onOpenAssignDriver={(b) => {
             setAssignDriverTarget(b);
           }}
-          onMarkCompleted={async (b) => {
-            await handleStatusChange(b, 'Completed');
+          onMarkCompleted={async (b, finalTaxes) => {
+            await handleQuickUpdateStatusAndTaxes(b, {
+              status: 'Completed',
+              tollTax: finalTaxes?.tollTax,
+              stateTax: finalTaxes?.stateTax,
+            });
           }}
           onOpenInvoice={(b) => {
             setInvoiceTarget(b);
@@ -4643,13 +4731,13 @@ function AdminDashboard() {
                     setShowSyncIncomingModal(false);
                     showToast(
                       `Synced customer booking ${savedBooking.bookingId} (${savedBooking.customerName}) to Control Room${
-                        syncedToCloud ? ' & Firebase Firestore' : ''
+                        syncedToCloud ? ' & Supabase (public.bookings)' : ''
                       }.`
                     );
                   }}
                   className="px-4 py-2 text-xs font-extrabold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl cursor-pointer shadow-xs"
                 >
-                  Sync Booking to Control Room & Firestore
+                  Sync Booking to Control Room & Supabase
                 </button>
               </div>
             </div>

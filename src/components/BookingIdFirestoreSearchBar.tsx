@@ -575,18 +575,20 @@ export const BookingIdFirestoreSearchBar: React.FC<
                   </div>
                 )}
 
-                {/* 1-Click Status Progression: Pending -> Active -> Completed */}
+                {/* 1-Click Status Progression: Pending -> Driver Allotted -> Active -> Completed -> Cancelled */}
                 {onQuickUpdateStatusAndTaxes && (
                   <div className="space-y-1 pt-1">
                     <div className="text-[10px] font-extrabold uppercase text-slate-500">
-                      Status Progression (Pending → Active → Completed)
+                      Status Progression (Pending → Driver Allotted → Active → Completed)
                     </div>
-                    <div className="grid grid-cols-3 gap-1">
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-1">
                       {(
                         [
                           { st: 'Pending', label: 'Pending' },
+                          { st: 'Driver Allotted', label: 'Allotted' },
                           { st: 'Active', label: 'Active' },
                           { st: 'Completed', label: 'Completed' },
+                          { st: 'Cancelled', label: 'Cancelled' },
                         ] as const
                       ).map((step) => (
                         <button
@@ -594,7 +596,7 @@ export const BookingIdFirestoreSearchBar: React.FC<
                           type="button"
                           disabled={updatingBilling}
                           onClick={() => handleSaveTaxesAndStatus(step.st)}
-                          className={`py-1 px-1.5 rounded-lg text-[11px] font-extrabold border cursor-pointer ${
+                          className={`py-1 px-1.5 rounded-lg text-[10px] font-extrabold border cursor-pointer ${
                             activeBooking.status === step.st
                               ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 border-slate-900 dark:border-amber-500'
                               : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-amber-500'

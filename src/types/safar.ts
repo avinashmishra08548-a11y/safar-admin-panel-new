@@ -4,6 +4,7 @@ export type VehicleCategory = 'Hatchback' | 'Sedan' | 'SUV' | 'Innova Crysta';
 export type TariffCategoryId = 'hatchback' | 'sedan' | 'suv' | 'innova_crysta';
 export type BookingStatus =
   | 'Pending'
+  | 'Driver Allotted'
   | 'Confirmed'
   | 'Active'
   | 'Completed'
@@ -92,8 +93,8 @@ export interface Booking {
   invoiceNumber: string;
   invoiceReady: boolean;
   createdBy: string;
-  createdAt?: Timestamp | null;
-  updatedAt?: Timestamp | null;
+  createdAt?: Timestamp | string | null;
+  updatedAt?: Timestamp | string | null;
   firestoreDocId?: string;
   syncedCollection?: string;
   timestampMs?: number;
@@ -954,7 +955,8 @@ export function normalizeIncomingBooking(
     : 'Round Trip Outstation';
 
   const pickupCity = String(
-    raw.pickupCity ||
+    raw.pickup_location ||
+      raw.pickupCity ||
       raw.pickup_city ||
       raw.pickupLocation ||
       raw.pickup ||
@@ -964,7 +966,8 @@ export function normalizeIncomingBooking(
   ).trim();
 
   const dropCity = String(
-    raw.dropCity ||
+    raw.drop_location ||
+      raw.dropCity ||
       raw.drop_city ||
       raw.dropLocation ||
       raw.drop ||
@@ -975,40 +978,56 @@ export function normalizeIncomingBooking(
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const rawDate = String(
-    raw.pickupDate || raw.pickup_date || raw.travelDate || raw.date || todayStr
+    raw.trip_date ||
+      raw.pickupDate ||
+      raw.pickup_date ||
+      raw.travelDate ||
+      raw.date ||
+      todayStr
   ).trim();
-  const pickupDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
-    ? rawDate
+  const pickupDate = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+    ? rawDate.slice(0, 10)
     : todayStr;
 
   const pickupTime = String(
-    raw.pickupTime || raw.pickup_time || raw.travelTime || raw.time || '08:00 AM'
+    raw.trip_time ||
+      raw.pickupTime ||
+      raw.pickup_time ||
+      raw.travelTime ||
+      raw.time ||
+      '08:00 AM'
   ).trim();
 
   const rawCat = String(
-    raw.vehicleCategory ||
+    raw.vehicle_type ||
+      raw.vehicleCategory ||
       raw.vehicle_category ||
       raw.cabCategory ||
       raw.cabType ||
       raw.carType ||
       'Sedan'
   ).toLowerCase();
-  const vehicleCategory: VehicleCategory = rawCat.includes('innova') || rawCat.includes('crysta')
-    ? 'Innova Crysta'
-    : rawCat.includes('suv') || rawCat.includes('ertiga') || rawCat.includes('carens')
-    ? 'SUV'
-    : rawCat.includes('hatch') || rawCat.includes('wagon') || rawCat.includes('tiago')
-    ? 'Hatchback'
-    : 'Sedan';
+  const vehicleCategory: VehicleCategory =
+    rawCat.includes('innova') || rawCat.includes('crysta')
+      ? 'Innova Crysta'
+      : rawCat.includes('suv') ||
+          rawCat.includes('ertiga') ||
+          rawCat.includes('carens')
+        ? 'SUV'
+        : rawCat.includes('hatch') ||
+            rawCat.includes('wagon') ||
+            rawCat.includes('tiago')
+          ? 'Hatchback'
+          : 'Sedan';
 
   const defaultRate =
     vehicleCategory === 'Innova Crysta'
       ? 21
       : vehicleCategory === 'SUV'
-      ? 17
-      : vehicleCategory === 'Hatchback'
-      ? 11
-      : 13;
+        ? 17
+        : vehicleCategory === 'Hatchback'
+          ? 11
+          : 13;
 
   const distanceKm = Math.max(
     1,
@@ -1026,30 +1045,24 @@ export function normalizeIncomingBooking(
 
   const perKmRate = Math.max(
     5,
-    Number(raw.perKmRate || raw.per_km_rate || raw.ratePerKm || raw.rate || defaultRate)
+    Number(
+      raw.perKmRate || raw.per_km_rate || raw.ratePerKm || raw.rate || defaultRate
+    )
   );
 
-  const rawTotal = Number(
-    raw.totalFare || raw.total_fare || raw.totalAmount || raw.fare || raw.amount || 0
-  );
-  const baseFare =
-    Number(raw.baseFare || raw.base_fare || 0) > 0
-      ? Number(raw.baseFare || raw.base_fare)
-      : rawTotal > 0
-      ? Math.round(rawTotal / 1.05)
-      : Math.round(distanceKm * perKmRate);
-
-  const driverAllowance = Math.max(
-    0,
-    Number(raw.driverAllowance ?? raw.driver_allowance ?? raw.driverBata ?? 0)
-  );
   const tollTax = Math.max(
     0,
-    Number(raw.tollTax ?? raw.toll_tax ?? raw.highwayToll ?? 0)
+    Number(
+      raw.toll_charges ?? raw.tollTax ?? raw.toll_tax ?? raw.highwayToll ?? 0
+    )
   );
   const stateTax = Math.max(
     0,
-    Number(raw.stateTax ?? raw.state_tax ?? raw.permitCharges ?? 0)
+    Number(raw.state_tax ?? raw.stateTax ?? raw.permitCharges ?? 0)
+  );
+  const driverAllowance = Math.max(
+    0,
+    Number(raw.driverAllowance ?? raw.driver_allowance ?? raw.driverBata ?? 0)
   );
   const nightCharges = Math.max(
     0,
@@ -1060,49 +1073,110 @@ export function normalizeIncomingBooking(
     Number(raw.marketDiscount ?? raw.market_discount ?? raw.discount ?? 0)
   );
 
+  const rawTotal = Number(
+    raw.total_fare ||
+      raw.totalFare ||
+      raw.totalAmount ||
+      raw.fare ||
+      raw.amount ||
+      0
+  );
+
+  // If row came from Supabase with total_fare, toll_charges, state_tax, derive baseFare cleanly if not explicitly provided
+  const explicitBaseFare = Number(raw.baseFare || raw.base_fare || 0);
+  const preTaxFromTotal =
+    rawTotal > 0 ? Math.round(rawTotal / 1.05) : Math.round(distanceKm * perKmRate);
+  const baseFare =
+    explicitBaseFare > 0
+      ? explicitBaseFare
+      : Math.max(
+          0,
+          preTaxFromTotal -
+            driverAllowance -
+            tollTax -
+            stateTax -
+            nightCharges +
+            marketDiscount
+        );
+
   const computedTaxable = Math.max(
     0,
-    baseFare + driverAllowance + tollTax + stateTax + nightCharges - marketDiscount
+    baseFare +
+      driverAllowance +
+      tollTax +
+      stateTax +
+      nightCharges -
+      marketDiscount
   );
   const gstAmount =
     Number(raw.gstAmount ?? raw.gst_amount ?? -1) >= 0
       ? Number(raw.gstAmount ?? raw.gst_amount)
-      : Math.round(computedTaxable * 0.05);
+      : rawTotal > 0 && explicitBaseFare === 0
+        ? Math.max(0, Math.round(rawTotal) - computedTaxable)
+        : Math.round(computedTaxable * 0.05);
 
   const totalFare =
-    rawTotal > 0 ? Math.round(rawTotal) : computedTaxable + gstAmount;
+    rawTotal > 0 && explicitBaseFare === 0
+      ? Math.round(rawTotal)
+      : computedTaxable + gstAmount;
 
-  const rawPaymentMode = String(raw.paymentMode || raw.payment_mode || '').toLowerCase();
+  const rawPaymentMode = String(
+    raw.paymentMode || raw.payment_mode || ''
+  ).toLowerCase();
+  const advancePaid =
+    Number(raw.advance_paid ?? raw.advancePaid ?? raw.paidAmount ?? -1) >= 0
+      ? Number(raw.advance_paid ?? raw.advancePaid ?? raw.paidAmount)
+      : rawPaymentMode.includes('full') || rawPaymentMode.includes('100')
+        ? totalFare
+        : Math.round(totalFare * 0.2);
+
+  const balanceAmount =
+    Number(
+      raw.remaining_balance ??
+        raw.balanceAmount ??
+        raw.balance_amount ??
+        raw.dueAmount ??
+        -1
+    ) >= 0
+      ? Number(
+          raw.remaining_balance ??
+            raw.balanceAmount ??
+            raw.balance_amount ??
+            raw.dueAmount
+        )
+      : Math.max(0, totalFare - advancePaid);
+
   const paymentMode: PaymentMode =
-    rawPaymentMode.includes('full') || rawPaymentMode.includes('100')
+    rawPaymentMode.includes('full') ||
+    rawPaymentMode.includes('100') ||
+    (balanceAmount === 0 && advancePaid > 0)
       ? 'Full Paid'
       : '20% Advance';
 
-  const advancePaid =
-    Number(raw.advancePaid ?? raw.advance_paid ?? raw.paidAmount ?? -1) >= 0
-      ? Number(raw.advancePaid ?? raw.advance_paid ?? raw.paidAmount)
-      : paymentMode === 'Full Paid'
-      ? totalFare
-      : Math.round(totalFare * 0.2);
-
-  const balanceAmount =
-    Number(raw.balanceAmount ?? raw.balance_amount ?? raw.dueAmount ?? -1) >= 0
-      ? Number(raw.balanceAmount ?? raw.balance_amount ?? raw.dueAmount)
-      : Math.max(0, totalFare - advancePaid);
-
   const rawStatus = String(raw.status || 'Pending').toLowerCase();
+  const hasDriverAssigned = Boolean(
+    (raw.driver_name || raw.driverName) &&
+      (raw.vehicle_number || raw.vehicleNumber)
+  );
   const status: BookingStatus = rawStatus.includes('complete')
     ? 'Completed'
     : rawStatus.includes('cancel')
-    ? 'Cancelled'
-    : rawStatus.includes('active') ||
-      rawStatus.includes('started') ||
-      rawStatus.includes('ongoing') ||
-      rawStatus.includes('trip')
-    ? 'Active'
-    : rawStatus.includes('confirm') || rawStatus.includes('assign')
-    ? 'Confirmed'
-    : 'Pending';
+      ? 'Cancelled'
+      : rawStatus.includes('allot') || rawStatus.includes('assign')
+        ? 'Driver Allotted'
+        : rawStatus.includes('active') ||
+            rawStatus.includes('started') ||
+            rawStatus.includes('ongoing') ||
+            rawStatus.includes('trip')
+          ? 'Active'
+          : rawStatus.includes('confirm')
+            ? hasDriverAssigned
+              ? 'Driver Allotted'
+              : 'Confirmed'
+            : 'Pending';
+
+  const createdAtVal =
+    (raw.created_at as string) || (raw.createdAt as Timestamp | string) || null;
 
   const normalized: Booking = {
     bookingId,
@@ -1134,34 +1208,52 @@ export function normalizeIncomingBooking(
     status,
     workflowStage:
       (raw.workflowStage as DetailedWorkflowStage) ||
+      (raw.workflow_stage as DetailedWorkflowStage) ||
       (status === 'Completed'
         ? 'Trip Completed'
         : status === 'Active'
-        ? 'Trip Started'
-        : status === 'Confirmed'
-        ? 'Driver Assigned'
-        : 'Requested'),
+          ? 'Trip Started'
+          : status === 'Driver Allotted' || status === 'Confirmed'
+            ? 'Driver Assigned'
+            : 'Requested'),
     bookingSource:
-      (raw.bookingSource as BookingSource) || 'Website',
-    specialInstructions: String(raw.specialInstructions || raw.notes || ''),
-    internalNotes: String(raw.internalNotes || ''),
-    driverName: String(raw.driverName || raw.driver_name || ''),
-    driverPhone: String(raw.driverPhone || raw.driver_phone || ''),
-    vehicleNumber: String(raw.vehicleNumber || raw.vehicle_number || ''),
-    vehicleModel: String(raw.vehicleModel || raw.vehicle_model || ''),
-    invoiceNumber: String(raw.invoiceNumber || raw.invoice_number || ''),
-    invoiceReady: Boolean(raw.invoiceReady ?? status === 'Completed'),
-    createdBy: String(raw.createdBy || raw.userId || 'customer_portal'),
-    createdAt: (raw.createdAt as Timestamp) || null,
-    updatedAt: (raw.updatedAt as Timestamp) || null,
-    firestoreDocId: docId || bookingId,
+      (raw.bookingSource as BookingSource) ||
+      (raw.booking_source as BookingSource) ||
+      'Website',
+    specialInstructions: String(
+      raw.specialInstructions || raw.special_instructions || raw.notes || ''
+    ),
+    internalNotes: String(raw.internalNotes || raw.internal_notes || ''),
+    driverName: String(raw.driver_name || raw.driverName || ''),
+    driverPhone: String(raw.driver_phone || raw.driverPhone || ''),
+    vehicleNumber: String(raw.vehicle_number || raw.vehicleNumber || ''),
+    vehicleModel: String(
+      raw.vehicle_model ||
+        raw.vehicleModel ||
+        (raw.vehicle_type ? `${raw.vehicle_type} AC` : '')
+    ),
+    invoiceNumber: String(
+      raw.invoice_number ||
+        raw.invoiceNumber ||
+        (status === 'Completed'
+          ? `SIC-2026-${bookingId.replace(/\D/g, '') || '2608'}`
+          : '')
+    ),
+    invoiceReady: Boolean(
+      raw.invoice_ready ?? raw.invoiceReady ?? status === 'Completed'
+    ),
+    createdBy: String(raw.createdBy || raw.userId || 'supabase_live'),
+    createdAt: createdAtVal,
+    updatedAt: (raw.updatedAt as Timestamp | string) || createdAtVal,
+    firestoreDocId: String(raw.id || docId || bookingId),
     syncedCollection: collectionName,
     timestampMs:
+      extractTimestampMs(raw.created_at) ||
       extractTimestampMs(raw.createdAt) ||
       extractTimestampMs(raw.updatedAt) ||
       extractTimestampMs(raw.timestamp) ||
       extractTimestampMs(raw.bookedAt) ||
-      Number(raw.timestampMs || 0),
+      Number(raw.timestampMs || Date.now()),
   };
 
   if (isSampleDemoBooking(normalized)) {

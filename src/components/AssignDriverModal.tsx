@@ -466,25 +466,26 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
               </div>
             </div>
 
-            {/* Trip Status Lifecycle Selector (Pending -> Active -> Completed) */}
+            {/* Trip Status Lifecycle Selector (Pending -> Driver Allotted -> Active -> Completed -> Cancelled) */}
             <div className="space-y-1.5">
               <label className="block text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                Update Booking Dispatch Status (Pending → Active → Completed)
+                Update Booking Dispatch Status (Pending → Driver Allotted → Active → Completed → Cancelled)
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {(
                   [
                     { status: 'Pending', label: '1. Pending' },
-                    { status: 'Confirmed', label: '2. Allotted' },
-                    { status: 'Active', label: '3. Active Trip' },
+                    { status: 'Driver Allotted', label: '2. Driver Allotted' },
+                    { status: 'Active', label: '3. Active' },
                     { status: 'Completed', label: '4. Completed' },
+                    { status: 'Cancelled', label: '5. Cancelled' },
                   ] as const
                 ).map((item) => (
                   <button
                     key={item.status}
                     type="button"
                     onClick={() => setSelectedStatus(item.status)}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border-2 transition-colors cursor-pointer ${
+                    className={`py-2 px-2 rounded-xl text-xs font-extrabold border-2 transition-colors cursor-pointer ${
                       selectedStatus === item.status
                         ? 'bg-slate-900 dark:bg-amber-500 text-white dark:text-slate-950 border-slate-900 dark:border-amber-500 shadow-xs'
                         : 'bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-800 hover:border-amber-500'
@@ -568,7 +569,7 @@ export const AssignDriverModal: React.FC<AssignDriverModalProps> = ({
                 <span>
                   {saving
                     ? 'Saving & Syncing...'
-                    : `Save Dispatch (${selectedStatus}) & Sync Firestore`}
+                    : `Save Dispatch (${selectedStatus}) & Sync Supabase`}
                 </span>
               </button>
             </div>
